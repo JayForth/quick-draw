@@ -1,4 +1,5 @@
 // Quick Draw - Typing Showdown Game
+const VERSION = '1.1.0'; // Hierarchical ragdoll physics
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -1585,6 +1586,12 @@ function draw() {
       ctx.fillText('Press Space or Enter to continue', centerX, bottomY);
     }
   }
+
+  // Version number in bottom-left corner
+  ctx.font = `${scale(12)}px "Courier New", monospace`;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.fillText(`v${VERSION}`, scale(10), canvas.height - scale(10));
 }
 
 // Clear all pending timers
