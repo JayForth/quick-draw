@@ -7,6 +7,9 @@ const hiddenInput = document.getElementById('hidden-input');
 // Aspect ratio (width:height)
 const ASPECT_RATIO = 2.5;
 
+// Ground level (where cowboys stand) as percentage of canvas height
+const GROUND_LEVEL = 0.73;
+
 // Resize canvas to fill width
 function resizeCanvas() {
   const width = window.innerWidth;
@@ -27,7 +30,15 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
-// Day/night cycle palettes (10 stages)
+// Background image
+const backgroundImage = new Image();
+backgroundImage.src = '/background.jpg';
+let backgroundLoaded = false;
+backgroundImage.onload = () => {
+  backgroundLoaded = true;
+};
+
+// Day/night cycle palettes (10 stages) - kept for countdown positioning
 // Day: Sun descends from top over 5 rounds
 // Night: Moon descends from top over 5 rounds
 const skyPalettes = [
@@ -351,7 +362,7 @@ function updateBullet() {
     // Start ragdoll with bullet direction
     const loserIsPlayer = !b.isPlayerShooting;
     const baseX = loserIsPlayer ? canvas.width * 0.25 : canvas.width * 0.75;
-    const baseY = canvas.height * 0.80;
+    const baseY = canvas.height * GROUND_LEVEL;
     startRagdollWithImpact(loserIsPlayer, baseX, baseY, b.vx, b.vy, b.x, b.y);
 
     state.bullet = null;
@@ -382,7 +393,7 @@ function spawnBlood(x, y, bulletVx, bulletVy) {
 // Update blood particles
 function updateBlood() {
   const gravity = 0.4;
-  const groundY = canvas.height * 0.80;
+  const groundY = canvas.height * GROUND_LEVEL;
 
   for (let i = state.blood.length - 1; i >= 0; i--) {
     const p = state.blood[i];
@@ -470,7 +481,7 @@ function spawnGibs(x, y, bulletVx, bulletVy) {
 // Update gib physics
 function updateGibs() {
   const gravity = 0.5;
-  const groundY = canvas.height * 0.80;
+  const groundY = canvas.height * GROUND_LEVEL;
 
   for (let i = state.gibs.length - 1; i >= 0; i--) {
     const g = state.gibs[i];
@@ -857,158 +868,16 @@ function getAITypeInterval() {
 function drawBackground() {
   const w = canvas.width;
   const h = canvas.height;
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
-  const groundY = h * 0.7;
 
-  // Sky gradient
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
-  skyGrad.addColorStop(0, palette.top);
-  skyGrad.addColorStop(0.5, palette.mid);
-  skyGrad.addColorStop(1, palette.bottom);
-  ctx.fillStyle = skyGrad;
-  ctx.fillRect(0, 0, w, groundY);
-
-  // Sun/Moon position based on time of day
-  const sunX = w * 0.5;
-  const sunY = h * palette.sunY;
-  const sunR = scale(40);
-
-  // Stars for night scenes
-  if (palette.isNight) {
-    ctx.fillStyle = '#ffffff';
-    // Use a seeded random for consistent star positions
-    const starSeed = 12345;
-    for (let i = 0; i < 60; i++) {
-      const sx = ((starSeed + i * 127) % 1000) / 1000 * w;
-      const sy = ((starSeed + i * 311) % 1000) / 1000 * groundY * 0.85;
-      const sr = ((starSeed + i * 73) % 3) + 1;
-      ctx.globalAlpha = 0.4 + ((starSeed + i * 53) % 50) / 100;
-      ctx.beginPath();
-      ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+  if (backgroundLoaded) {
+    // Draw the background image scaled to cover the canvas
+    // The image will be stretched to fit the canvas dimensions
+    ctx.drawImage(backgroundImage, 0, 0, w, h);
+  } else {
+    // Fallback solid color while image loads
+    ctx.fillStyle = '#c9a66b';
+    ctx.fillRect(0, 0, w, h);
   }
-
-  // Sun/Moon glow
-  const glowGrad = ctx.createRadialGradient(sunX, sunY, sunR * 0.5, sunX, sunY, sunR * 3);
-  glowGrad.addColorStop(0, palette.sunGlow);
-  glowGrad.addColorStop(1, 'transparent');
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(0, 0, w, groundY);
-
-  // Sun/Moon disc
-  ctx.fillStyle = palette.sun;
-  ctx.beginPath();
-  ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Distant mesas/mountains
-  ctx.fillStyle = '#4a3728';
-  // Left mesa
-  ctx.beginPath();
-  ctx.moveTo(0, groundY);
-  ctx.lineTo(w * 0.05, groundY - scale(60));
-  ctx.lineTo(w * 0.1, groundY - scale(80));
-  ctx.lineTo(w * 0.18, groundY - scale(75));
-  ctx.lineTo(w * 0.22, groundY - scale(40));
-  ctx.lineTo(w * 0.25, groundY);
-  ctx.fill();
-
-  // Right mesa
-  ctx.beginPath();
-  ctx.moveTo(w * 0.75, groundY);
-  ctx.lineTo(w * 0.78, groundY - scale(50));
-  ctx.lineTo(w * 0.85, groundY - scale(90));
-  ctx.lineTo(w * 0.9, groundY - scale(85));
-  ctx.lineTo(w * 0.95, groundY - scale(55));
-  ctx.lineTo(w, groundY - scale(30));
-  ctx.lineTo(w, groundY);
-  ctx.fill();
-
-  // Ground - dusty desert
-  const groundGrad = ctx.createLinearGradient(0, groundY, 0, h);
-  groundGrad.addColorStop(0, '#c9a66b');
-  groundGrad.addColorStop(0.3, '#b8956a');
-  groundGrad.addColorStop(1, '#8b7355');
-  ctx.fillStyle = groundGrad;
-  ctx.fillRect(0, groundY, w, h - groundY);
-
-  // Main street (lighter dirt path)
-  ctx.fillStyle = '#d4b896';
-  ctx.beginPath();
-  ctx.moveTo(w * 0.3, groundY);
-  ctx.lineTo(w * 0.7, groundY);
-  ctx.lineTo(w * 0.85, h);
-  ctx.lineTo(w * 0.15, h);
-  ctx.fill();
-
-  // Cacti on sides
-  drawCactus(w * 0.08, groundY, 0.8);
-  drawCactus(w * 0.92, groundY, 1);
-  drawCactus(w * 0.15, groundY, 0.5);
-  drawCactus(w * 0.88, groundY, 0.6);
-
-  // Simple wooden buildings silhouettes sitting on ground
-  ctx.fillStyle = '#3d2914';
-
-  // Left building (saloon) - sits directly on groundY
-  ctx.fillRect(w * 0.02, groundY - scale(50), scale(60), scale(50));
-  // Saloon roof peak
-  ctx.beginPath();
-  ctx.moveTo(w * 0.02 - scale(5), groundY - scale(50));
-  ctx.lineTo(w * 0.02 + scale(30), groundY - scale(70));
-  ctx.lineTo(w * 0.02 + scale(65), groundY - scale(50));
-  ctx.fill();
-
-  // Right building - sits directly on groundY
-  ctx.fillRect(w * 0.98 - scale(50), groundY - scale(45), scale(50), scale(45));
-
-  // Dust particles
-  ctx.fillStyle = 'rgba(200, 180, 150, 0.3)';
-  for (let i = 0; i < 8; i++) {
-    const dx = (w * 0.2) + (i * w * 0.08);
-    const dy = groundY + scale(20 + (i % 3) * 15);
-    ctx.beginPath();
-    ctx.ellipse(dx, dy, scale(15 + i * 2), scale(5), 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawCactus(x, groundY, size) {
-  const s = scale(1) * size;
-  const cactusColor = '#2d5a27';
-  const cactusHighlight = '#3d7a37';
-
-  ctx.fillStyle = cactusColor;
-  ctx.strokeStyle = '#1a3a17';
-  ctx.lineWidth = scale(1);
-
-  // Main trunk
-  ctx.beginPath();
-  ctx.roundRect(x - s * 8, groundY - s * 60, s * 16, s * 60, s * 5);
-  ctx.fill();
-  ctx.stroke();
-
-  // Left arm
-  ctx.beginPath();
-  ctx.roundRect(x - s * 30, groundY - s * 45, s * 25, s * 10, s * 4);
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.roundRect(x - s * 30, groundY - s * 55, s * 10, s * 20, s * 4);
-  ctx.fill();
-  ctx.stroke();
-
-  // Right arm
-  ctx.beginPath();
-  ctx.roundRect(x + s * 5, groundY - s * 35, s * 22, s * 10, s * 4);
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.roundRect(x + s * 18, groundY - s * 50, s * 10, s * 25, s * 4);
-  ctx.fill();
-  ctx.stroke();
 }
 
 // Scale factor based on canvas height (base design is 400px tall)
@@ -1375,7 +1244,7 @@ function draw() {
   // Cowboys positioned relative to canvas (25% and 75% width, 80% height)
   const playerX = canvas.width * 0.25;
   const enemyX = canvas.width * 0.75;
-  const cowboyY = canvas.height * 0.80;
+  const cowboyY = canvas.height * GROUND_LEVEL;
 
   // Draw cowboys - use ragdoll for the loser
   if (ragdoll.active && ragdoll.isPlayer) {
@@ -1652,7 +1521,7 @@ function endRound(winner) {
   // Fire bullet from winner to loser
   const playerX = canvas.width * 0.25;
   const enemyX = canvas.width * 0.75;
-  const cowboyY = canvas.height * 0.80;
+  const cowboyY = canvas.height * GROUND_LEVEL;
   const gunHeight = cowboyY - scale(60); // Approximate gun height
 
   if (winner === 'player') {
