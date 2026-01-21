@@ -442,6 +442,10 @@ const ragdoll = {
     legL: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
     legR: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
   },
+  // Distance constraints - keeps body parts connected
+  // [partA, partB, restDistance, stiffness]
+  constraints: [],
+  constraintIterations: 3, // More iterations = stiffer constraints
   gravity: 0.8,
   groundY: 0, // Set when ragdoll starts
   friction: 0.85,
@@ -450,11 +454,62 @@ const ragdoll = {
   wound: null, // Wound location for blood spurting {partName, offsetX, offsetY, intensity}
 };
 
+// Initialize ragdoll constraints based on body proportions
+function initRagdollConstraints() {
+  const s = scale(1);
+  ragdoll.constraints = [
+    // [partA, partB, distance, stiffness (0-1)]
+    ['head', 'torso', s * 35, 0.8],      // Neck
+    ['armGun', 'torso', s * 25, 0.6],    // Gun arm shoulder
+    ['armBack', 'torso', s * 25, 0.6],   // Back arm shoulder
+    ['legL', 'torso', s * 40, 0.7],      // Left hip
+    ['legR', 'torso', s * 40, 0.7],      // Right hip
+  ];
+}
+
+// Enforce distance constraints between connected body parts
+function enforceConstraints() {
+  for (let iter = 0; iter < ragdoll.constraintIterations; iter++) {
+    for (const [partAName, partBName, restDist, stiffness] of ragdoll.constraints) {
+      const partA = ragdoll.parts[partAName];
+      const partB = ragdoll.parts[partBName];
+
+      // Calculate current distance
+      const dx = partB.x - partA.x;
+      const dy = partB.y - partA.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 0.001) continue; // Avoid division by zero
+
+      // Calculate how much to correct
+      const diff = (dist - restDist) / dist;
+      const correctionX = dx * diff * stiffness * 0.5;
+      const correctionY = dy * diff * stiffness * 0.5;
+
+      // Move both parts toward each other (equal weight)
+      partA.x += correctionX;
+      partA.y += correctionY;
+      partB.x -= correctionX;
+      partB.y -= correctionY;
+
+      // Also adjust velocities slightly to reduce jitter
+      const velDamp = 0.1;
+      partA.vx += correctionX * velDamp;
+      partA.vy += correctionY * velDamp;
+      partB.vx -= correctionX * velDamp;
+      partB.vy -= correctionY * velDamp;
+    }
+  }
+}
+
 function startRagdoll(isPlayer, baseX, groundY) {
   ragdoll.active = true;
   ragdoll.isPlayer = isPlayer;
   ragdoll.startTime = Date.now();
   ragdoll.groundY = groundY;
+
+  // Initialize constraints for connected body parts
+  initRagdollConstraints();
 
   const dir = isPlayer ? 1 : -1; // Direction they're facing
   const hitDir = isPlayer ? -1 : 1; // Direction of impact (opposite)
@@ -540,6 +595,18 @@ function updateRagdoll() {
     // Air friction
     part.vx *= 0.99;
     part.vrot *= 0.98;
+  }
+
+  // Enforce distance constraints to keep body parts connected
+  enforceConstraints();
+
+  // Re-check ground collision after constraints (parts may have moved)
+  for (const partName in ragdoll.parts) {
+    const part = ragdoll.parts[partName];
+    if (part.y > 0) {
+      part.y = 0;
+      if (part.vy > 0) part.vy *= -0.3;
+    }
   }
 
   // Blood spurting from wound
@@ -842,6 +909,9 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
     bulletVx: bulletVx,
     bulletVy: bulletVy,
   };
+
+  // Initialize constraints for connected body parts
+  initRagdollConstraints();
 
   // Impact force based on bullet direction
   const impactForce = 12;
