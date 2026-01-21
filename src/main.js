@@ -459,12 +459,13 @@ function initRagdollConstraints() {
   const s = scale(1);
   ragdoll.constraints = [
     // [partA, partB, distance, stiffness (0-1)]
-    ['head', 'torso', s * 35, 0.8],      // Neck
-    ['armGun', 'torso', s * 25, 0.6],    // Gun arm shoulder
-    ['armBack', 'torso', s * 25, 0.6],   // Back arm shoulder
-    ['legL', 'torso', s * 40, 0.7],      // Left hip
-    ['legR', 'torso', s * 40, 0.7],      // Right hip
+    ['head', 'torso', s * 30, 0.95],     // Neck - tight
+    ['armGun', 'torso', s * 15, 0.9],    // Gun arm shoulder
+    ['armBack', 'torso', s * 15, 0.9],   // Back arm shoulder
+    ['legL', 'torso', s * 35, 0.9],      // Left hip
+    ['legR', 'torso', s * 35, 0.9],      // Right hip
   ];
+  ragdoll.constraintIterations = 8; // More iterations for stability
 }
 
 // Enforce distance constraints between connected body parts
@@ -914,52 +915,56 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
   initRagdollConstraints();
 
   // Impact force based on bullet direction
-  const impactForce = 12;
+  const impactForce = 10;
   const impactX = bulletVx > 0 ? impactForce : -impactForce;
-  const impactY = -8;
+  const impactY = -6;
 
-  // Each part gets slightly different velocities for realistic ragdoll
-  ragdoll.parts.head = {
-    x: 0, y: -scale(80),
-    vx: impactX * 1.2 + (Math.random() - 0.5) * 4,
-    vy: impactY - 4 + Math.random() * 2,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.2 + Math.random() * 0.2),
-  };
+  // All parts start with similar base velocity (they move as a unit initially)
+  // Small variations create natural-looking secondary motion
+  const baseVx = impactX;
+  const baseVy = impactY;
+
   ragdoll.parts.torso = {
     x: 0, y: -scale(50),
-    vx: impactX + (Math.random() - 0.5) * 2,
-    vy: impactY + Math.random() * 2,
+    vx: baseVx + (Math.random() - 0.5) * 2,
+    vy: baseVy + (Math.random() - 0.5) * 2,
     rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.1),
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.08 + Math.random() * 0.06),
+  };
+  ragdoll.parts.head = {
+    x: 0, y: -scale(80),
+    vx: baseVx + (Math.random() - 0.5) * 3,
+    vy: baseVy - 2 + (Math.random() - 0.5) * 2,
+    rot: 0,
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.15 + Math.random() * 0.1),
   };
   ragdoll.parts.armGun = {
     x: 0, y: -scale(60),
-    vx: impactX * 1.3 + (Math.random() - 0.5) * 3,
-    vy: impactY - 2 + Math.random() * 3,
+    vx: baseVx + (Math.random() - 0.5) * 4,
+    vy: baseVy + (Math.random() - 0.5) * 3,
     rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.25 + Math.random() * 0.2),
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.2 + Math.random() * 0.15),
   };
   ragdoll.parts.armBack = {
     x: 0, y: -scale(60),
-    vx: impactX * 0.8 + (Math.random() - 0.5) * 3,
-    vy: impactY + 1 + Math.random() * 2,
+    vx: baseVx + (Math.random() - 0.5) * 4,
+    vy: baseVy + (Math.random() - 0.5) * 3,
     rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.15 + Math.random() * 0.15),
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.15 + Math.random() * 0.1),
   };
   ragdoll.parts.legL = {
-    x: -scale(10), y: -scale(20),
-    vx: impactX * 0.6 + (Math.random() - 0.5) * 2,
-    vy: impactY + 3 + Math.random() * 2,
+    x: -scale(8), y: -scale(20),
+    vx: baseVx + (Math.random() - 0.5) * 2,
+    vy: baseVy + 2 + (Math.random() - 0.5) * 2,
     rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.1),
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.08),
   };
   ragdoll.parts.legR = {
-    x: scale(10), y: -scale(20),
-    vx: impactX * 0.7 + (Math.random() - 0.5) * 2,
-    vy: impactY + 2 + Math.random() * 2,
+    x: scale(8), y: -scale(20),
+    vx: baseVx + (Math.random() - 0.5) * 2,
+    vy: baseVy + 2 + (Math.random() - 0.5) * 2,
     rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.12 + Math.random() * 0.1),
+    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.08),
   };
 }
 
