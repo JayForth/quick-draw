@@ -1,5 +1,5 @@
 // Quick Draw - Typing Showdown Game
-const VERSION = '1.1.0'; // Hierarchical ragdoll physics
+const VERSION = '1.2.0'; // Loose ragdoll with inertia
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -430,34 +430,34 @@ function setAiArmTarget(target) {
 }
 
 // Ragdoll physics for death animation
-// Hierarchical system: torso is root, limbs are offsets that rotate around attachment points
+// Rockstar-style loose ragdoll - limbs have inertia and swing freely
 const ragdoll = {
   active: false,
   isPlayer: false,
   startTime: 0,
-  baseX: 0,      // World X position of cowboy's feet
-  baseY: 0,      // World Y position of cowboy's feet (ground level)
+  baseX: 0,
+  baseY: 0,
 
-  // Torso is the ROOT - only this has world position/velocity
+  // Torso is the ROOT with world position/velocity
   torso: {
-    x: 0, y: 0,           // Position relative to baseX, baseY
-    vx: 0, vy: 0,         // Velocity
-    rot: 0, vrot: 0,      // Rotation and angular velocity
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    prevVx: 0, prevVy: 0,  // Previous velocity for acceleration calc
+    rot: 0, vrot: 0,
   },
 
-  // Limbs are attached to torso - they rotate around their attachment point
-  // Each limb has: attachment point (relative to torso center), length, rotation
-  head: { rot: 0, vrot: 0 },       // Attached at top of torso
-  armGun: { rot: 0, vrot: 0 },     // Attached at shoulder
-  armBack: { rot: 0, vrot: 0 },    // Attached at shoulder
-  legL: { rot: 0, vrot: 0 },       // Attached at hip
-  legR: { rot: 0, vrot: 0 },       // Attached at hip
+  // Limbs swing freely - each has rotation, velocity, and physical properties
+  head: { rot: 0, vrot: 0, damping: 0.96, gravity: 0.08, length: 25 },
+  armGun: { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 },
+  armBack: { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 },
+  legL: { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 },
+  legR: { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 },
 
-  gravity: 0.6,
+  gravity: 0.5,
   groundY: 0,
-  friction: 0.7,
-  rotFriction: 0.95,
+  friction: 0.6,
   wound: null,
+  hitGround: false,
 }
 
 function startRagdoll(isPlayer, baseX, groundY) {
@@ -467,27 +467,31 @@ function startRagdoll(isPlayer, baseX, groundY) {
   ragdoll.groundY = groundY;
   ragdoll.baseX = baseX;
   ragdoll.baseY = groundY;
+  ragdoll.hitGround = false;
 
   const hitDir = isPlayer ? -1 : 1;
-  const impactForce = 6 + Math.random() * 3;
-  const upForce = -4 - Math.random() * 2;
+  const impactForce = 8 + Math.random() * 5;
+  const upForce = -6 - Math.random() * 4;
 
-  // Torso is the root - gets the main impact
+  // Torso gets strong initial impact
   ragdoll.torso = {
     x: 0,
-    y: -scale(50),  // Torso center starts at chest height
+    y: -scale(50),
     vx: hitDir * impactForce,
     vy: upForce,
-    rot: 0,
-    vrot: hitDir * (0.08 + Math.random() * 0.06),
+    prevVx: 0,
+    prevVy: 0,
+    rot: hitDir * 0.1,
+    vrot: hitDir * (0.12 + Math.random() * 0.1),
   };
 
-  // Limbs get initial angular velocity to flop around
-  ragdoll.head = { rot: 0, vrot: hitDir * (0.1 + Math.random() * 0.08) };
-  ragdoll.armGun = { rot: hitDir * 0.2, vrot: hitDir * (0.15 + Math.random() * 0.1) };
-  ragdoll.armBack = { rot: -hitDir * 0.2, vrot: hitDir * (0.1 + Math.random() * 0.08) };
-  ragdoll.legL = { rot: 0, vrot: hitDir * (0.06 + Math.random() * 0.04) };
-  ragdoll.legR = { rot: 0, vrot: hitDir * (0.08 + Math.random() * 0.05) };
+  // Limbs start with momentum opposing the hit direction (inertia)
+  // Arms flail more, legs trail behind
+  ragdoll.head = { rot: -hitDir * 0.3, vrot: -hitDir * (0.2 + Math.random() * 0.15), damping: 0.96, gravity: 0.08, length: 25 };
+  ragdoll.armGun = { rot: -hitDir * 0.5, vrot: -hitDir * (0.4 + Math.random() * 0.3), damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.armBack = { rot: -hitDir * 0.4, vrot: -hitDir * (0.35 + Math.random() * 0.25), damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.legL = { rot: -hitDir * 0.2, vrot: -hitDir * (0.15 + Math.random() * 0.1), damping: 0.94, gravity: 0.15, length: 45 };
+  ragdoll.legR = { rot: -hitDir * 0.15, vrot: -hitDir * (0.12 + Math.random() * 0.1), damping: 0.94, gravity: 0.15, length: 45 };
 }
 
 function updateRagdoll() {
@@ -495,6 +499,10 @@ function updateRagdoll() {
 
   const s = scale(1);
   const t = ragdoll.torso;
+
+  // Store previous velocity for acceleration calculation
+  const prevVx = t.vx;
+  const prevVy = t.vy;
 
   // Apply gravity to torso
   t.vy += ragdoll.gravity;
@@ -504,44 +512,77 @@ function updateRagdoll() {
   t.y += t.vy;
   t.rot += t.vrot;
 
-  // Ground collision for torso (check against feet level, adjusted for torso height)
-  const torsoBottom = t.y + s * 30; // Bottom of torso
+  // Calculate acceleration (change in velocity)
+  const accelX = t.vx - prevVx;
+  const accelY = t.vy - prevVy;
+
+  // Ground collision for torso
+  const torsoBottom = t.y + s * 30;
   if (torsoBottom > 0) {
     t.y = -s * 30;
-    t.vy *= -0.3; // Bounce
+
+    // First impact - dramatic limb flop
+    if (!ragdoll.hitGround) {
+      ragdoll.hitGround = true;
+      // Limbs flop hard on impact
+      const impactStrength = Math.abs(t.vy) * 0.15;
+      ragdoll.head.vrot += (Math.random() - 0.5) * impactStrength * 2;
+      ragdoll.armGun.vrot += (Math.random() - 0.5) * impactStrength * 3;
+      ragdoll.armBack.vrot += (Math.random() - 0.5) * impactStrength * 3;
+      ragdoll.legL.vrot += (Math.random() - 0.5) * impactStrength * 2;
+      ragdoll.legR.vrot += (Math.random() - 0.5) * impactStrength * 2;
+    }
+
+    t.vy *= -0.25; // Bounce
     t.vx *= ragdoll.friction;
-    t.vrot *= 0.5;
+    t.vrot *= 0.6;
 
     // Stop tiny bounces
-    if (Math.abs(t.vy) < 1) {
+    if (Math.abs(t.vy) < 0.8) {
       t.vy = 0;
     }
   }
 
   // Air friction
-  t.vx *= 0.99;
-  t.vrot *= ragdoll.rotFriction;
+  t.vx *= 0.98;
+  t.vrot *= 0.97;
 
-  // Update limb rotations - they swing based on torso movement and settle over time
-  const limbs = ['head', 'armGun', 'armBack', 'legL', 'legR'];
-  for (const limbName of limbs) {
+  // Update each limb with pendulum physics
+  const limbNames = ['head', 'armGun', 'armBack', 'legL', 'legR'];
+  for (const limbName of limbNames) {
     const limb = ragdoll[limbName];
 
-    // Limbs swing in response to torso angular velocity
-    limb.vrot += t.vrot * 0.3;
+    // Inertia effect: limbs resist changes in motion
+    // When torso accelerates, limbs swing in opposite direction
+    const inertiaX = -accelX * 0.08;
+    const inertiaY = -accelY * 0.04;
 
-    // Add some gravity effect - limbs want to hang down
-    const gravityPull = Math.sin(t.rot + limb.rot) * 0.02;
-    limb.vrot += gravityPull;
+    // Convert linear inertia to angular (based on limb orientation)
+    const worldAngle = t.rot + limb.rot + Math.PI / 2; // Limbs hang down
+    limb.vrot += inertiaX * Math.cos(worldAngle) + inertiaY * Math.sin(worldAngle);
+
+    // Torso rotation drags limbs along (but with lag)
+    limb.vrot += t.vrot * 0.5;
+
+    // Gravity - limbs want to hang straight down relative to world
+    // Calculate angle of limb relative to straight down
+    const limbWorldAngle = t.rot + limb.rot;
+    const gravityTorque = Math.sin(limbWorldAngle) * limb.gravity;
+    limb.vrot -= gravityTorque;
 
     // Apply angular velocity
     limb.rot += limb.vrot;
 
-    // Damping - limbs settle over time
-    limb.vrot *= 0.94;
+    // Damping
+    limb.vrot *= limb.damping;
 
-    // Clamp rotation to reasonable range
-    limb.rot = Math.max(-Math.PI * 0.6, Math.min(Math.PI * 0.6, limb.rot));
+    // Soft joint limits - spring back gently at extremes instead of hard clamp
+    const maxRot = Math.PI * 0.85;
+    if (Math.abs(limb.rot) > maxRot) {
+      const excess = Math.abs(limb.rot) - maxRot;
+      limb.vrot -= Math.sign(limb.rot) * excess * 0.3;
+      limb.rot = Math.sign(limb.rot) * Math.min(Math.abs(limb.rot), Math.PI * 0.95);
+    }
   }
 
   // Blood spurting from wound
@@ -557,7 +598,6 @@ function updateRagdoll() {
     if (Math.random() < spurtChance) {
       const numDrops = Math.floor(1 + Math.random() * 3 * wound.intensity);
       for (let i = 0; i < numDrops; i++) {
-        // Blood spurts in bullet direction with some randomness
         const spread = (Math.random() - 0.5) * 1.5;
         const speed = 2 + Math.random() * 5 * wound.intensity;
         const angle = Math.atan2(wound.bulletVy, wound.bulletVx) + spread;
@@ -573,7 +613,6 @@ function updateRagdoll() {
       }
     }
 
-    // Decrease wound intensity over time
     wound.intensity -= 0.008;
     if (wound.intensity < 0) wound.intensity = 0;
   }
@@ -582,16 +621,17 @@ function updateRagdoll() {
 function resetRagdoll() {
   ragdoll.active = false;
   ragdoll.wound = null;
+  ragdoll.hitGround = false;
 
   // Reset torso
-  ragdoll.torso = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 };
+  ragdoll.torso = { x: 0, y: 0, vx: 0, vy: 0, prevVx: 0, prevVy: 0, rot: 0, vrot: 0 };
 
-  // Reset limbs
-  ragdoll.head = { rot: 0, vrot: 0 };
-  ragdoll.armGun = { rot: 0, vrot: 0 };
-  ragdoll.armBack = { rot: 0, vrot: 0 };
-  ragdoll.legL = { rot: 0, vrot: 0 };
-  ragdoll.legR = { rot: 0, vrot: 0 };
+  // Reset limbs with their physical properties
+  ragdoll.head = { rot: 0, vrot: 0, damping: 0.96, gravity: 0.08, length: 25 };
+  ragdoll.armGun = { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.armBack = { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.legL = { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 };
+  ragdoll.legR = { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 };
 }
 
 // Fire bullet from winner to loser
@@ -834,37 +874,41 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
   ragdoll.groundY = groundY;
   ragdoll.baseX = baseX;
   ragdoll.baseY = groundY;
+  ragdoll.hitGround = false;
 
-  // Set up wound for blood spurting - attach to torso
+  // Set up wound for blood spurting
   ragdoll.wound = {
-    offsetX: woundX - baseX, // Offset from torso center
-    offsetY: woundY - groundY + scale(50), // Offset from torso
-    intensity: 1.0, // Blood flow intensity (decreases over time)
+    offsetX: woundX - baseX,
+    offsetY: woundY - groundY + scale(50),
+    intensity: 1.0,
     bulletVx: bulletVx,
     bulletVy: bulletVy,
   };
 
-  // Impact direction
+  // Impact direction and force
   const hitDir = bulletVx > 0 ? 1 : -1;
-  const impactForce = 8 + Math.random() * 4;
-  const upForce = -5 - Math.random() * 3;
+  const impactForce = 10 + Math.random() * 6;
+  const upForce = -8 - Math.random() * 5;
 
-  // Torso is the root - gets the main impact
+  // Torso gets strong initial impact with spin
   ragdoll.torso = {
     x: 0,
-    y: -scale(50),  // Torso center starts at chest height
+    y: -scale(50),
     vx: hitDir * impactForce,
     vy: upForce,
-    rot: 0,
-    vrot: hitDir * (0.1 + Math.random() * 0.08),
+    prevVx: 0,
+    prevVy: 0,
+    rot: hitDir * 0.15,
+    vrot: hitDir * (0.15 + Math.random() * 0.12),
   };
 
-  // Limbs get initial angular velocity to flop around
-  ragdoll.head = { rot: 0, vrot: hitDir * (0.12 + Math.random() * 0.1) };
-  ragdoll.armGun = { rot: hitDir * 0.3, vrot: hitDir * (0.2 + Math.random() * 0.15) };
-  ragdoll.armBack = { rot: -hitDir * 0.2, vrot: hitDir * (0.12 + Math.random() * 0.1) };
-  ragdoll.legL = { rot: 0, vrot: hitDir * (0.08 + Math.random() * 0.06) };
-  ragdoll.legR = { rot: 0, vrot: hitDir * (0.1 + Math.random() * 0.08) };
+  // Limbs react with inertia - they lag behind the sudden torso movement
+  // Arms flail dramatically, legs trail
+  ragdoll.head = { rot: -hitDir * 0.4, vrot: -hitDir * (0.25 + Math.random() * 0.2), damping: 0.96, gravity: 0.08, length: 25 };
+  ragdoll.armGun = { rot: -hitDir * 0.8, vrot: -hitDir * (0.5 + Math.random() * 0.4), damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.armBack = { rot: -hitDir * 0.6, vrot: -hitDir * (0.45 + Math.random() * 0.35), damping: 0.92, gravity: 0.12, length: 30 };
+  ragdoll.legL = { rot: -hitDir * 0.25, vrot: -hitDir * (0.18 + Math.random() * 0.12), damping: 0.94, gravity: 0.15, length: 45 };
+  ragdoll.legR = { rot: -hitDir * 0.2, vrot: -hitDir * (0.15 + Math.random() * 0.12), damping: 0.94, gravity: 0.15, length: 45 };
 }
 
 // Draw ragdolled cowboy - hierarchical: torso is root, limbs attach to it
