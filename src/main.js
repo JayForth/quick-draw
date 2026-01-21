@@ -42,6 +42,271 @@ backgroundImage.onload = () => {
   backgroundLoaded = true;
 };
 
+// ============================================
+// ATMOSPHERIC EFFECTS
+// ============================================
+
+// Dust particles drifting in the wind
+const dustParticles = [];
+const DUST_COUNT = 40;
+
+function initDust() {
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dustParticles.push(createDustParticle(true));
+  }
+}
+
+function createDustParticle(randomX = false) {
+  return {
+    x: randomX ? Math.random() * canvas.width : canvas.width + Math.random() * 100,
+    y: Math.random() * canvas.height * 0.85,
+    size: 1 + Math.random() * 3,
+    speedX: -0.3 - Math.random() * 0.8,
+    speedY: Math.sin(Math.random() * Math.PI * 2) * 0.2,
+    opacity: 0.2 + Math.random() * 0.4,
+    wobble: Math.random() * Math.PI * 2,
+    wobbleSpeed: 0.02 + Math.random() * 0.03,
+  };
+}
+
+function updateDust() {
+  for (let i = 0; i < dustParticles.length; i++) {
+    const p = dustParticles[i];
+    p.wobble += p.wobbleSpeed;
+    p.x += p.speedX;
+    p.y += p.speedY + Math.sin(p.wobble) * 0.3;
+
+    // Reset when off screen
+    if (p.x < -10) {
+      dustParticles[i] = createDustParticle(false);
+    }
+  }
+}
+
+function drawDust() {
+  for (const p of dustParticles) {
+    ctx.globalAlpha = p.opacity;
+    ctx.fillStyle = '#d4a76a';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Tumbleweeds
+const tumbleweeds = [];
+let lastTumbleweedTime = 0;
+const TUMBLEWEED_INTERVAL = 8000 + Math.random() * 12000; // 8-20 seconds
+
+function createTumbleweed() {
+  const fromLeft = Math.random() > 0.5;
+  const size = 15 + Math.random() * 25;
+  return {
+    x: fromLeft ? -size * 2 : canvas.width + size * 2,
+    y: canvas.height * (0.65 + Math.random() * 0.12),
+    size: size,
+    speedX: fromLeft ? (1.5 + Math.random() * 2) : -(1.5 + Math.random() * 2),
+    rotation: 0,
+    rotationSpeed: (fromLeft ? 1 : -1) * (0.05 + Math.random() * 0.05),
+    bouncePhase: Math.random() * Math.PI * 2,
+    opacity: 0.7 + Math.random() * 0.3,
+  };
+}
+
+function updateTumbleweeds() {
+  const now = Date.now();
+
+  // Spawn new tumbleweed occasionally
+  if (now - lastTumbleweedTime > TUMBLEWEED_INTERVAL && tumbleweeds.length < 2) {
+    tumbleweeds.push(createTumbleweed());
+    lastTumbleweedTime = now;
+  }
+
+  // Update existing tumbleweeds
+  for (let i = tumbleweeds.length - 1; i >= 0; i--) {
+    const t = tumbleweeds[i];
+    t.x += t.speedX;
+    t.rotation += t.rotationSpeed;
+    t.bouncePhase += 0.15;
+    t.y += Math.sin(t.bouncePhase) * 0.5; // Gentle bounce
+
+    // Remove when off screen
+    if ((t.speedX > 0 && t.x > canvas.width + t.size * 2) ||
+        (t.speedX < 0 && t.x < -t.size * 2)) {
+      tumbleweeds.splice(i, 1);
+    }
+  }
+}
+
+function drawTumbleweeds() {
+  for (const t of tumbleweeds) {
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.rotation);
+    ctx.globalAlpha = t.opacity;
+
+    // Draw tumbleweed as a messy circle of lines
+    ctx.strokeStyle = '#8B7355';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const innerR = t.size * 0.3;
+      const outerR = t.size * (0.8 + Math.sin(angle * 3 + t.rotation) * 0.2);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * innerR, Math.sin(angle) * innerR);
+      ctx.lineTo(Math.cos(angle) * outerR, Math.sin(angle) * outerR);
+      ctx.stroke();
+    }
+
+    // Inner scribble
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2 + t.rotation * 0.5;
+      const r = t.size * (0.2 + Math.sin(angle * 5) * 0.15);
+      if (i === 0) ctx.moveTo(Math.cos(angle) * r, Math.sin(angle) * r);
+      else ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Sun glint effect
+let glintPhase = 0;
+const glintSpeed = 0.02;
+
+function drawSunGlint() {
+  glintPhase += glintSpeed;
+
+  // Sun position (roughly center-top of the background image)
+  const sunX = canvas.width * 0.5;
+  const sunY = canvas.height * 0.22;
+
+  // Pulsing glow
+  const pulseSize = 1 + Math.sin(glintPhase) * 0.15;
+  const glowRadius = canvas.height * 0.15 * pulseSize;
+
+  // Outer glow
+  const gradient = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, glowRadius);
+  gradient.addColorStop(0, 'rgba(255, 250, 220, 0.3)');
+  gradient.addColorStop(0.5, 'rgba(255, 240, 200, 0.1)');
+  gradient.addColorStop(1, 'rgba(255, 230, 180, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(sunX - glowRadius, sunY - glowRadius, glowRadius * 2, glowRadius * 2);
+
+  // Lens flare streaks (subtle)
+  ctx.globalAlpha = 0.15 + Math.sin(glintPhase * 1.5) * 0.1;
+  ctx.strokeStyle = 'rgba(255, 250, 230, 0.5)';
+  ctx.lineWidth = 2;
+
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2 + glintPhase * 0.1;
+    const len = canvas.height * (0.08 + Math.sin(glintPhase + i) * 0.02);
+    ctx.beginPath();
+    ctx.moveTo(sunX, sunY);
+    ctx.lineTo(sunX + Math.cos(angle) * len, sunY + Math.sin(angle) * len);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// Floating dust motes (larger, slower, more visible)
+const dustMotes = [];
+const MOTE_COUNT = 8;
+
+function initDustMotes() {
+  for (let i = 0; i < MOTE_COUNT; i++) {
+    dustMotes.push({
+      x: Math.random() * canvas.width,
+      y: canvas.height * (0.3 + Math.random() * 0.4),
+      size: 2 + Math.random() * 4,
+      speedX: -0.1 - Math.random() * 0.2,
+      driftY: Math.random() * Math.PI * 2,
+      opacity: 0,
+      targetOpacity: 0.3 + Math.random() * 0.3,
+      fadeSpeed: 0.005 + Math.random() * 0.01,
+      fading: false,
+    });
+  }
+}
+
+function updateDustMotes() {
+  for (const m of dustMotes) {
+    m.driftY += 0.02;
+    m.x += m.speedX;
+    m.y += Math.sin(m.driftY) * 0.3;
+
+    // Fade in/out
+    if (!m.fading) {
+      m.opacity = Math.min(m.targetOpacity, m.opacity + m.fadeSpeed);
+      if (m.opacity >= m.targetOpacity && Math.random() < 0.002) {
+        m.fading = true;
+      }
+    } else {
+      m.opacity = Math.max(0, m.opacity - m.fadeSpeed);
+      if (m.opacity <= 0) {
+        // Reset
+        m.x = canvas.width + Math.random() * 100;
+        m.y = canvas.height * (0.3 + Math.random() * 0.4);
+        m.fading = false;
+        m.targetOpacity = 0.3 + Math.random() * 0.3;
+      }
+    }
+
+    // Wrap around
+    if (m.x < -20) {
+      m.x = canvas.width + Math.random() * 100;
+    }
+  }
+}
+
+function drawDustMotes() {
+  for (const m of dustMotes) {
+    if (m.opacity <= 0) continue;
+    ctx.globalAlpha = m.opacity;
+
+    // Glowing dust mote
+    const gradient = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.size * 2);
+    gradient.addColorStop(0, 'rgba(255, 245, 220, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 240, 200, 0.3)');
+    gradient.addColorStop(1, 'rgba(255, 235, 180, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(m.x - m.size * 2, m.y - m.size * 2, m.size * 4, m.size * 4);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Initialize atmospheric effects
+function initAtmosphere() {
+  initDust();
+  initDustMotes();
+  lastTumbleweedTime = Date.now();
+}
+
+// Update all atmospheric effects
+function updateAtmosphere() {
+  updateDust();
+  updateDustMotes();
+  updateTumbleweeds();
+}
+
+// Draw all atmospheric effects (call after background, before characters)
+function drawAtmosphere() {
+  drawSunGlint();
+  drawDust();
+  drawDustMotes();
+  drawTumbleweeds();
+}
+
+// ============================================
+// END ATMOSPHERIC EFFECTS
+// ============================================
+
 // Day/night cycle palettes (10 stages) - kept for countdown positioning
 // Day: Sun descends from top over 5 rounds
 // Night: Moon descends from top over 5 rounds
@@ -1244,6 +1509,7 @@ function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawBackground();
+  drawAtmosphere();
 
   // Cowboys positioned relative to canvas (25% and 75% width, 80% height)
   const playerX = canvas.width * PLAYER_X;
@@ -1558,6 +1824,7 @@ function gameLoop() {
   updateBlood();
   updateGibs();
   updateRagdoll();
+  updateAtmosphere();
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -1600,5 +1867,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 console.log('Quick Draw loaded!');
+initAtmosphere();
 draw();
 gameLoop();
