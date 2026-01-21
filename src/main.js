@@ -10,6 +10,10 @@ const ASPECT_RATIO = 2.5;
 // Ground level (where cowboys stand) as percentage of canvas height
 const GROUND_LEVEL = 0.73;
 
+// Cowboy X positions (percentage of canvas width)
+const PLAYER_X = 0.32;
+const ENEMY_X = 0.68;
+
 // Resize canvas to fill width
 function resizeCanvas() {
   const width = window.innerWidth;
@@ -361,7 +365,7 @@ function updateBullet() {
 
     // Start ragdoll with bullet direction
     const loserIsPlayer = !b.isPlayerShooting;
-    const baseX = loserIsPlayer ? canvas.width * 0.25 : canvas.width * 0.75;
+    const baseX = loserIsPlayer ? canvas.width * PLAYER_X : canvas.width * ENEMY_X;
     const baseY = canvas.height * GROUND_LEVEL;
     startRagdollWithImpact(loserIsPlayer, baseX, baseY, b.vx, b.vy, b.x, b.y);
 
@@ -1242,8 +1246,8 @@ function draw() {
   drawBackground();
 
   // Cowboys positioned relative to canvas (25% and 75% width, 80% height)
-  const playerX = canvas.width * 0.25;
-  const enemyX = canvas.width * 0.75;
+  const playerX = canvas.width * PLAYER_X;
+  const enemyX = canvas.width * ENEMY_X;
   const cowboyY = canvas.height * GROUND_LEVEL;
 
   // Draw cowboys - use ragdoll for the loser
@@ -1519,8 +1523,8 @@ function endRound(winner) {
   state.roundEndTime = Date.now();
 
   // Fire bullet from winner to loser
-  const playerX = canvas.width * 0.25;
-  const enemyX = canvas.width * 0.75;
+  const playerX = canvas.width * PLAYER_X;
+  const enemyX = canvas.width * ENEMY_X;
   const cowboyY = canvas.height * GROUND_LEVEL;
   const gunHeight = cowboyY - scale(60); // Approximate gun height
 
