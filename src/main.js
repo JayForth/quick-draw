@@ -429,78 +429,34 @@ function setAiArmTarget(target) {
 }
 
 // Ragdoll physics for death animation
+// Hierarchical system: torso is root, limbs are offsets that rotate around attachment points
 const ragdoll = {
   active: false,
   isPlayer: false,
   startTime: 0,
-  // Body parts with position offsets from base, velocity, and rotation
-  parts: {
-    head: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
-    torso: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
-    armGun: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
-    armBack: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
-    legL: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
-    legR: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 },
+  baseX: 0,      // World X position of cowboy's feet
+  baseY: 0,      // World Y position of cowboy's feet (ground level)
+
+  // Torso is the ROOT - only this has world position/velocity
+  torso: {
+    x: 0, y: 0,           // Position relative to baseX, baseY
+    vx: 0, vy: 0,         // Velocity
+    rot: 0, vrot: 0,      // Rotation and angular velocity
   },
-  // Distance constraints - keeps body parts connected
-  // [partA, partB, restDistance, stiffness]
-  constraints: [],
-  constraintIterations: 3, // More iterations = stiffer constraints
-  gravity: 0.8,
-  groundY: 0, // Set when ragdoll starts
-  friction: 0.85,
-  baseX: 0, // Base position for wound tracking
-  baseY: 0,
-  wound: null, // Wound location for blood spurting {partName, offsetX, offsetY, intensity}
-};
 
-// Initialize ragdoll constraints based on body proportions
-function initRagdollConstraints() {
-  const s = scale(1);
-  ragdoll.constraints = [
-    // [partA, partB, distance, stiffness (0-1)]
-    ['head', 'torso', s * 30, 0.95],     // Neck - tight
-    ['armGun', 'torso', s * 15, 0.9],    // Gun arm shoulder
-    ['armBack', 'torso', s * 15, 0.9],   // Back arm shoulder
-    ['legL', 'torso', s * 35, 0.9],      // Left hip
-    ['legR', 'torso', s * 35, 0.9],      // Right hip
-  ];
-  ragdoll.constraintIterations = 8; // More iterations for stability
-}
+  // Limbs are attached to torso - they rotate around their attachment point
+  // Each limb has: attachment point (relative to torso center), length, rotation
+  head: { rot: 0, vrot: 0 },       // Attached at top of torso
+  armGun: { rot: 0, vrot: 0 },     // Attached at shoulder
+  armBack: { rot: 0, vrot: 0 },    // Attached at shoulder
+  legL: { rot: 0, vrot: 0 },       // Attached at hip
+  legR: { rot: 0, vrot: 0 },       // Attached at hip
 
-// Enforce distance constraints between connected body parts
-function enforceConstraints() {
-  for (let iter = 0; iter < ragdoll.constraintIterations; iter++) {
-    for (const [partAName, partBName, restDist, stiffness] of ragdoll.constraints) {
-      const partA = ragdoll.parts[partAName];
-      const partB = ragdoll.parts[partBName];
-
-      // Calculate current distance
-      const dx = partB.x - partA.x;
-      const dy = partB.y - partA.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < 0.001) continue; // Avoid division by zero
-
-      // Calculate how much to correct
-      const diff = (dist - restDist) / dist;
-      const correctionX = dx * diff * stiffness * 0.5;
-      const correctionY = dy * diff * stiffness * 0.5;
-
-      // Move both parts toward each other (equal weight)
-      partA.x += correctionX;
-      partA.y += correctionY;
-      partB.x -= correctionX;
-      partB.y -= correctionY;
-
-      // Also adjust velocities slightly to reduce jitter
-      const velDamp = 0.1;
-      partA.vx += correctionX * velDamp;
-      partA.vy += correctionY * velDamp;
-      partB.vx -= correctionX * velDamp;
-      partB.vy -= correctionY * velDamp;
-    }
-  }
+  gravity: 0.6,
+  groundY: 0,
+  friction: 0.7,
+  rotFriction: 0.95,
+  wound: null,
 }
 
 function startRagdoll(isPlayer, baseX, groundY) {
@@ -508,116 +464,92 @@ function startRagdoll(isPlayer, baseX, groundY) {
   ragdoll.isPlayer = isPlayer;
   ragdoll.startTime = Date.now();
   ragdoll.groundY = groundY;
+  ragdoll.baseX = baseX;
+  ragdoll.baseY = groundY;
 
-  // Initialize constraints for connected body parts
-  initRagdollConstraints();
+  const hitDir = isPlayer ? -1 : 1;
+  const impactForce = 6 + Math.random() * 3;
+  const upForce = -4 - Math.random() * 2;
 
-  const dir = isPlayer ? 1 : -1; // Direction they're facing
-  const hitDir = isPlayer ? -1 : 1; // Direction of impact (opposite)
-
-  // Initialize all parts at origin with impact velocities
-  const impactForce = 8 + Math.random() * 4;
-  const upForce = -6 - Math.random() * 3;
-
-  ragdoll.parts.head = {
-    x: 0, y: 0,
-    vx: hitDir * (impactForce + Math.random() * 3),
-    vy: upForce - 2,
-    rot: 0,
-    vrot: hitDir * (0.2 + Math.random() * 0.15),
-  };
-  ragdoll.parts.torso = {
-    x: 0, y: 0,
+  // Torso is the root - gets the main impact
+  ragdoll.torso = {
+    x: 0,
+    y: -scale(50),  // Torso center starts at chest height
     vx: hitDir * impactForce,
     vy: upForce,
     rot: 0,
-    vrot: hitDir * (0.1 + Math.random() * 0.1),
+    vrot: hitDir * (0.08 + Math.random() * 0.06),
   };
-  ragdoll.parts.armGun = {
-    x: 0, y: 0,
-    vx: hitDir * (impactForce + 2),
-    vy: upForce - 3,
-    rot: 0,
-    vrot: hitDir * (0.3 + Math.random() * 0.2),
-  };
-  ragdoll.parts.armBack = {
-    x: 0, y: 0,
-    vx: hitDir * (impactForce - 2),
-    vy: upForce + 1,
-    rot: 0,
-    vrot: hitDir * (0.15 + Math.random() * 0.1),
-  };
-  ragdoll.parts.legL = {
-    x: 0, y: 0,
-    vx: hitDir * (impactForce - 1),
-    vy: upForce + 2,
-    rot: 0,
-    vrot: hitDir * (0.1 + Math.random() * 0.15),
-  };
-  ragdoll.parts.legR = {
-    x: 0, y: 0,
-    vx: hitDir * (impactForce + 1),
-    vy: upForce + 1,
-    rot: 0,
-    vrot: hitDir * (0.12 + Math.random() * 0.1),
-  };
+
+  // Limbs get initial angular velocity to flop around
+  ragdoll.head = { rot: 0, vrot: hitDir * (0.1 + Math.random() * 0.08) };
+  ragdoll.armGun = { rot: hitDir * 0.2, vrot: hitDir * (0.15 + Math.random() * 0.1) };
+  ragdoll.armBack = { rot: -hitDir * 0.2, vrot: hitDir * (0.1 + Math.random() * 0.08) };
+  ragdoll.legL = { rot: 0, vrot: hitDir * (0.06 + Math.random() * 0.04) };
+  ragdoll.legR = { rot: 0, vrot: hitDir * (0.08 + Math.random() * 0.05) };
 }
 
 function updateRagdoll() {
   if (!ragdoll.active) return;
 
   const s = scale(1);
-  const groundLevel = 0; // Parts y=0 is at cowboy feet level
+  const t = ragdoll.torso;
 
-  for (const partName in ragdoll.parts) {
-    const part = ragdoll.parts[partName];
+  // Apply gravity to torso
+  t.vy += ragdoll.gravity;
 
-    // Apply gravity
-    part.vy += ragdoll.gravity;
+  // Apply velocity to torso
+  t.x += t.vx;
+  t.y += t.vy;
+  t.rot += t.vrot;
 
-    // Apply velocity
-    part.x += part.vx;
-    part.y += part.vy;
-    part.rot += part.vrot;
+  // Ground collision for torso (check against feet level, adjusted for torso height)
+  const torsoBottom = t.y + s * 30; // Bottom of torso
+  if (torsoBottom > 0) {
+    t.y = -s * 30;
+    t.vy *= -0.3; // Bounce
+    t.vx *= ragdoll.friction;
+    t.vrot *= 0.5;
 
-    // Ground collision
-    if (part.y > groundLevel) {
-      part.y = groundLevel;
-      part.vy *= -0.3; // Bounce
-      part.vx *= ragdoll.friction;
-      part.vrot *= 0.7;
-
-      // Stop tiny bounces
-      if (Math.abs(part.vy) < 1) {
-        part.vy = 0;
-      }
+    // Stop tiny bounces
+    if (Math.abs(t.vy) < 1) {
+      t.vy = 0;
     }
-
-    // Air friction
-    part.vx *= 0.99;
-    part.vrot *= 0.98;
   }
 
-  // Enforce distance constraints to keep body parts connected
-  enforceConstraints();
+  // Air friction
+  t.vx *= 0.99;
+  t.vrot *= ragdoll.rotFriction;
 
-  // Re-check ground collision after constraints (parts may have moved)
-  for (const partName in ragdoll.parts) {
-    const part = ragdoll.parts[partName];
-    if (part.y > 0) {
-      part.y = 0;
-      if (part.vy > 0) part.vy *= -0.3;
-    }
+  // Update limb rotations - they swing based on torso movement and settle over time
+  const limbs = ['head', 'armGun', 'armBack', 'legL', 'legR'];
+  for (const limbName of limbs) {
+    const limb = ragdoll[limbName];
+
+    // Limbs swing in response to torso angular velocity
+    limb.vrot += t.vrot * 0.3;
+
+    // Add some gravity effect - limbs want to hang down
+    const gravityPull = Math.sin(t.rot + limb.rot) * 0.02;
+    limb.vrot += gravityPull;
+
+    // Apply angular velocity
+    limb.rot += limb.vrot;
+
+    // Damping - limbs settle over time
+    limb.vrot *= 0.94;
+
+    // Clamp rotation to reasonable range
+    limb.rot = Math.max(-Math.PI * 0.6, Math.min(Math.PI * 0.6, limb.rot));
   }
 
   // Blood spurting from wound
   if (ragdoll.wound && ragdoll.wound.intensity > 0) {
     const wound = ragdoll.wound;
-    const part = ragdoll.parts[wound.partName];
 
-    // Calculate world position of wound
-    const woundWorldX = ragdoll.baseX + part.x + wound.offsetX;
-    const woundWorldY = ragdoll.baseY + part.y + wound.offsetY;
+    // Calculate world position of wound (attached to torso)
+    const woundWorldX = ragdoll.baseX + t.x + wound.offsetX * Math.cos(t.rot);
+    const woundWorldY = ragdoll.baseY + t.y + wound.offsetY;
 
     // Spawn blood spurts (fewer as intensity decreases)
     const spurtChance = wound.intensity * 0.6;
@@ -632,8 +564,8 @@ function updateRagdoll() {
         state.blood.push({
           x: woundWorldX + (Math.random() - 0.5) * 10,
           y: woundWorldY + (Math.random() - 0.5) * 10,
-          vx: Math.cos(angle) * speed + part.vx * 0.3,
-          vy: Math.sin(angle) * speed + part.vy * 0.3 - 1,
+          vx: Math.cos(angle) * speed + t.vx * 0.3,
+          vy: Math.sin(angle) * speed + t.vy * 0.3 - 1,
           size: 2 + Math.random() * 4,
           life: 0.8 + Math.random() * 0.2,
         });
@@ -649,15 +581,16 @@ function updateRagdoll() {
 function resetRagdoll() {
   ragdoll.active = false;
   ragdoll.wound = null;
-  for (const partName in ragdoll.parts) {
-    const part = ragdoll.parts[partName];
-    part.x = 0;
-    part.y = 0;
-    part.vx = 0;
-    part.vy = 0;
-    part.rot = 0;
-    part.vrot = 0;
-  }
+
+  // Reset torso
+  ragdoll.torso = { x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0 };
+
+  // Reset limbs
+  ragdoll.head = { rot: 0, vrot: 0 };
+  ragdoll.armGun = { rot: 0, vrot: 0 };
+  ragdoll.armBack = { rot: 0, vrot: 0 };
+  ragdoll.legL = { rot: 0, vrot: 0 };
+  ragdoll.legR = { rot: 0, vrot: 0 };
 }
 
 // Fire bullet from winner to loser
@@ -903,72 +836,37 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
 
   // Set up wound for blood spurting - attach to torso
   ragdoll.wound = {
-    partName: 'torso',
     offsetX: woundX - baseX, // Offset from torso center
-    offsetY: woundY - groundY + scale(50), // Offset from torso (adjusted for torso Y)
+    offsetY: woundY - groundY + scale(50), // Offset from torso
     intensity: 1.0, // Blood flow intensity (decreases over time)
     bulletVx: bulletVx,
     bulletVy: bulletVy,
   };
 
-  // Initialize constraints for connected body parts
-  initRagdollConstraints();
+  // Impact direction
+  const hitDir = bulletVx > 0 ? 1 : -1;
+  const impactForce = 8 + Math.random() * 4;
+  const upForce = -5 - Math.random() * 3;
 
-  // Impact force based on bullet direction
-  const impactForce = 10;
-  const impactX = bulletVx > 0 ? impactForce : -impactForce;
-  const impactY = -6;
+  // Torso is the root - gets the main impact
+  ragdoll.torso = {
+    x: 0,
+    y: -scale(50),  // Torso center starts at chest height
+    vx: hitDir * impactForce,
+    vy: upForce,
+    rot: 0,
+    vrot: hitDir * (0.1 + Math.random() * 0.08),
+  };
 
-  // All parts start with similar base velocity (they move as a unit initially)
-  // Small variations create natural-looking secondary motion
-  const baseVx = impactX;
-  const baseVy = impactY;
-
-  ragdoll.parts.torso = {
-    x: 0, y: -scale(50),
-    vx: baseVx + (Math.random() - 0.5) * 2,
-    vy: baseVy + (Math.random() - 0.5) * 2,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.08 + Math.random() * 0.06),
-  };
-  ragdoll.parts.head = {
-    x: 0, y: -scale(80),
-    vx: baseVx + (Math.random() - 0.5) * 3,
-    vy: baseVy - 2 + (Math.random() - 0.5) * 2,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.15 + Math.random() * 0.1),
-  };
-  ragdoll.parts.armGun = {
-    x: 0, y: -scale(60),
-    vx: baseVx + (Math.random() - 0.5) * 4,
-    vy: baseVy + (Math.random() - 0.5) * 3,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.2 + Math.random() * 0.15),
-  };
-  ragdoll.parts.armBack = {
-    x: 0, y: -scale(60),
-    vx: baseVx + (Math.random() - 0.5) * 4,
-    vy: baseVy + (Math.random() - 0.5) * 3,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.15 + Math.random() * 0.1),
-  };
-  ragdoll.parts.legL = {
-    x: -scale(8), y: -scale(20),
-    vx: baseVx + (Math.random() - 0.5) * 2,
-    vy: baseVy + 2 + (Math.random() - 0.5) * 2,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.08),
-  };
-  ragdoll.parts.legR = {
-    x: scale(8), y: -scale(20),
-    vx: baseVx + (Math.random() - 0.5) * 2,
-    vy: baseVy + 2 + (Math.random() - 0.5) * 2,
-    rot: 0,
-    vrot: (bulletVx > 0 ? 1 : -1) * (0.1 + Math.random() * 0.08),
-  };
+  // Limbs get initial angular velocity to flop around
+  ragdoll.head = { rot: 0, vrot: hitDir * (0.12 + Math.random() * 0.1) };
+  ragdoll.armGun = { rot: hitDir * 0.3, vrot: hitDir * (0.2 + Math.random() * 0.15) };
+  ragdoll.armBack = { rot: -hitDir * 0.2, vrot: hitDir * (0.12 + Math.random() * 0.1) };
+  ragdoll.legL = { rot: 0, vrot: hitDir * (0.08 + Math.random() * 0.06) };
+  ragdoll.legR = { rot: 0, vrot: hitDir * (0.1 + Math.random() * 0.08) };
 }
 
-// Draw ragdolled cowboy
+// Draw ragdolled cowboy - hierarchical: torso is root, limbs attach to it
 function drawRagdoll(baseX, baseY, facingRight) {
   ctx.save();
 
@@ -981,158 +879,184 @@ function drawRagdoll(baseX, baseY, facingRight) {
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#000';
 
-  const p = ragdoll.parts;
+  const t = ragdoll.torso;
 
-  // Helper to draw a rotated body part
-  function drawPart(part, drawFn) {
-    ctx.save();
-    ctx.translate(baseX + part.x, baseY + part.y);
-    ctx.rotate(part.rot);
-    drawFn();
-    ctx.restore();
+  // World position of torso center
+  const torsoX = baseX + t.x;
+  const torsoY = baseY + t.y;
+  const torsoRot = t.rot;
+
+  // Helper to get attachment point position (relative to torso center, affected by torso rotation)
+  function getAttachmentPoint(offsetX, offsetY) {
+    const cos = Math.cos(torsoRot);
+    const sin = Math.sin(torsoRot);
+    return {
+      x: torsoX + offsetX * cos - offsetY * sin,
+      y: torsoY + offsetX * sin + offsetY * cos,
+    };
   }
 
-  // Draw legs (behind torso)
+  // Draw legs (behind torso) - attached at hip
+  const hipL = getAttachmentPoint(-s * 8, s * 25);
+  const hipR = getAttachmentPoint(s * 8, s * 25);
+
   // Left leg
-  drawPart(p.legL, () => {
-    ctx.fillStyle = cowboyColors.pants;
-    ctx.beginPath();
-    ctx.roundRect(-s * 6, -s * 45, s * 12, s * 30, s * 3);
-    ctx.fill();
-    ctx.stroke();
-    // Boot
-    ctx.fillStyle = cowboyColors.boots;
-    ctx.beginPath();
-    ctx.roundRect(-s * 8, -s * 15, s * 16, s * 15, s * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+  ctx.save();
+  ctx.translate(hipL.x, hipL.y);
+  ctx.rotate(torsoRot + ragdoll.legL.rot);
+  ctx.fillStyle = cowboyColors.pants;
+  ctx.beginPath();
+  ctx.roundRect(-s * 6, 0, s * 12, s * 30, s * 3);
+  ctx.fill();
+  ctx.stroke();
+  // Boot
+  ctx.fillStyle = cowboyColors.boots;
+  ctx.beginPath();
+  ctx.roundRect(-s * 8, s * 30, s * 16, s * 15, s * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
   // Right leg
-  drawPart(p.legR, () => {
-    ctx.fillStyle = cowboyColors.pants;
-    ctx.beginPath();
-    ctx.roundRect(-s * 6, -s * 45, s * 12, s * 30, s * 3);
-    ctx.fill();
-    ctx.stroke();
-    // Boot
-    ctx.fillStyle = cowboyColors.boots;
-    ctx.beginPath();
-    ctx.roundRect(-s * 8, -s * 15, s * 16, s * 15, s * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+  ctx.save();
+  ctx.translate(hipR.x, hipR.y);
+  ctx.rotate(torsoRot + ragdoll.legR.rot);
+  ctx.fillStyle = cowboyColors.pants;
+  ctx.beginPath();
+  ctx.roundRect(-s * 6, 0, s * 12, s * 30, s * 3);
+  ctx.fill();
+  ctx.stroke();
+  // Boot
+  ctx.fillStyle = cowboyColors.boots;
+  ctx.beginPath();
+  ctx.roundRect(-s * 8, s * 30, s * 16, s * 15, s * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
-  // Back arm
-  drawPart(p.armBack, () => {
-    ctx.fillStyle = cowboyColors.shirt;
-    ctx.beginPath();
-    ctx.roundRect(-s * 5, -s * 30, s * 10, s * 25, s * 3);
-    ctx.fill();
-    ctx.stroke();
-    // Hand
-    ctx.fillStyle = cowboyColors.skin;
-    ctx.beginPath();
-    ctx.arc(0, 0, s * 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+  // Back arm - attached at back shoulder
+  const shoulderBack = getAttachmentPoint(-dir * s * 12, -s * 20);
+  ctx.save();
+  ctx.translate(shoulderBack.x, shoulderBack.y);
+  ctx.rotate(torsoRot + ragdoll.armBack.rot);
+  ctx.fillStyle = cowboyColors.shirt;
+  ctx.beginPath();
+  ctx.roundRect(-s * 5, 0, s * 10, s * 25, s * 3);
+  ctx.fill();
+  ctx.stroke();
+  // Hand
+  ctx.fillStyle = cowboyColors.skin;
+  ctx.beginPath();
+  ctx.arc(0, s * 28, s * 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
   // Torso
-  drawPart(p.torso, () => {
-    ctx.fillStyle = cowboyColors.shirt;
-    ctx.beginPath();
-    ctx.moveTo(-s * 15, -s * 50);
-    ctx.lineTo(s * 15, -s * 50);
-    ctx.lineTo(s * 12, 0);
-    ctx.lineTo(-s * 12, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // Vest
-    ctx.fillStyle = cowboyColors.vest;
-    ctx.beginPath();
-    ctx.moveTo(s * 5, -s * 50);
-    ctx.lineTo(s * 14, -s * 45);
-    ctx.lineTo(s * 10, 0);
-    ctx.lineTo(s * 5, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  });
+  ctx.save();
+  ctx.translate(torsoX, torsoY);
+  ctx.rotate(torsoRot);
+  ctx.fillStyle = cowboyColors.shirt;
+  ctx.beginPath();
+  ctx.moveTo(-s * 15, -s * 25);
+  ctx.lineTo(s * 15, -s * 25);
+  ctx.lineTo(s * 12, s * 25);
+  ctx.lineTo(-s * 12, s * 25);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Vest
+  ctx.fillStyle = cowboyColors.vest;
+  ctx.beginPath();
+  ctx.moveTo(dir * s * 5, -s * 25);
+  ctx.lineTo(dir * s * 14, -s * 20);
+  ctx.lineTo(dir * s * 10, s * 25);
+  ctx.lineTo(dir * s * 5, s * 25);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
-  // Gun arm
-  drawPart(p.armGun, () => {
-    ctx.fillStyle = cowboyColors.shirt;
-    ctx.beginPath();
-    ctx.roundRect(-s * 5, -s * 30, s * 10, s * 25, s * 3);
-    ctx.fill();
-    ctx.stroke();
-    // Hand
-    ctx.fillStyle = cowboyColors.skin;
-    ctx.beginPath();
-    ctx.arc(0, 0, s * 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    // Gun
-    ctx.fillStyle = cowboyColors.gun;
-    ctx.beginPath();
-    ctx.roundRect(-s * 3, -s * 5, s * 20, s * 6, s * 1);
-    ctx.fill();
-    ctx.stroke();
-  });
+  // Gun arm - attached at front shoulder
+  const shoulderGun = getAttachmentPoint(dir * s * 12, -s * 20);
+  ctx.save();
+  ctx.translate(shoulderGun.x, shoulderGun.y);
+  ctx.rotate(torsoRot + ragdoll.armGun.rot);
+  ctx.fillStyle = cowboyColors.shirt;
+  ctx.beginPath();
+  ctx.roundRect(-s * 5, 0, s * 10, s * 25, s * 3);
+  ctx.fill();
+  ctx.stroke();
+  // Hand
+  ctx.fillStyle = cowboyColors.skin;
+  ctx.beginPath();
+  ctx.arc(0, s * 28, s * 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Gun
+  ctx.fillStyle = cowboyColors.gun;
+  ctx.beginPath();
+  ctx.roundRect(-s * 3, s * 25, s * 20, s * 6, s * 1);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Head - attached at top of torso
+  const neckAttach = getAttachmentPoint(0, -s * 25);
+  ctx.save();
+  ctx.translate(neckAttach.x, neckAttach.y);
+  ctx.rotate(torsoRot + ragdoll.head.rot);
+
+  // Neck
+  ctx.fillStyle = cowboyColors.skin;
+  ctx.fillRect(-s * 5, -s * 10, s * 10, s * 12);
+  ctx.strokeRect(-s * 5, -s * 10, s * 10, s * 12);
 
   // Head
-  drawPart(p.head, () => {
-    // Neck
-    ctx.fillStyle = cowboyColors.skin;
-    ctx.fillRect(-s * 5, s * 5, s * 10, s * 10);
-    ctx.strokeRect(-s * 5, s * 5, s * 10, s * 10);
+  ctx.fillStyle = cowboyColors.skin;
+  ctx.beginPath();
+  ctx.ellipse(0, -s * 25, s * 18, s * 20, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 
-    // Head
-    ctx.fillStyle = cowboyColors.skin;
-    ctx.beginPath();
-    ctx.ellipse(0, -s * 10, s * 18, s * 20, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+  // X eyes (dead)
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = scale(2);
+  // Left X
+  ctx.beginPath();
+  ctx.moveTo(-s * 8, -s * 30);
+  ctx.lineTo(-s * 2, -s * 24);
+  ctx.moveTo(-s * 2, -s * 30);
+  ctx.lineTo(-s * 8, -s * 24);
+  ctx.stroke();
+  // Right X
+  ctx.beginPath();
+  ctx.moveTo(s * 2, -s * 30);
+  ctx.lineTo(s * 8, -s * 24);
+  ctx.moveTo(s * 8, -s * 30);
+  ctx.lineTo(s * 2, -s * 24);
+  ctx.stroke();
 
-    // X eyes (dead)
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = scale(2);
-    // Left X
-    ctx.beginPath();
-    ctx.moveTo(-s * 8, -s * 15);
-    ctx.lineTo(-s * 2, -s * 9);
-    ctx.moveTo(-s * 2, -s * 15);
-    ctx.lineTo(-s * 8, -s * 9);
-    ctx.stroke();
-    // Right X
-    ctx.beginPath();
-    ctx.moveTo(s * 2, -s * 15);
-    ctx.lineTo(s * 8, -s * 9);
-    ctx.moveTo(s * 8, -s * 15);
-    ctx.lineTo(s * 2, -s * 9);
-    ctx.stroke();
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = lineWidth;
 
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = lineWidth;
+  // Hat (tilted/falling off)
+  ctx.fillStyle = cowboyColors.hat;
+  ctx.beginPath();
+  ctx.ellipse(s * 3, -s * 42, s * 28, s * 7, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Crown
+  ctx.beginPath();
+  ctx.moveTo(-s * 10, -s * 42);
+  ctx.lineTo(-s * 6, -s * 65);
+  ctx.lineTo(s * 16, -s * 63);
+  ctx.lineTo(s * 18, -s * 40);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 
-    // Hat (tilted/falling off)
-    ctx.fillStyle = cowboyColors.hat;
-    ctx.beginPath();
-    ctx.ellipse(s * 5, -s * 30, s * 28, s * 7, 0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    // Crown
-    ctx.beginPath();
-    ctx.moveTo(-s * 8, -s * 30);
-    ctx.lineTo(-s * 4, -s * 52);
-    ctx.lineTo(s * 18, -s * 50);
-    ctx.lineTo(s * 20, -s * 28);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  });
+  ctx.restore();
 
   ctx.restore();
 }
