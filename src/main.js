@@ -254,35 +254,49 @@ function drawSpriteCowboy(x, y, facingRight, armProgress, isPlayer) {
   };
   drawSprite('arm_lower_front', frontElbow.x, frontElbow.y, dir * frontForearmAngle, s, flip);
 
-  // DEBUG: Draw joint positions (toggle with D key)
+  // DEBUG: Draw joint positions (toggle with 0 key, click to select, arrows to move)
   if (window.DEBUG_JOINTS) {
+    // Build list of editable joints with screen positions
+    window.DEBUG_JOINTS_LIST = [
+      { x: neckPos.x, y: neckPos.y, part: 'torso', point: 'neck', color: '#0ff', label: 'neck' },
+      { x: frontShoulder.x, y: frontShoulder.y, part: 'torso', point: 'shoulderFront', color: '#f00', label: 'shoulderF' },
+      { x: backShoulder.x, y: backShoulder.y, part: 'torso', point: 'shoulderBack', color: '#f0f', label: 'shoulderB' },
+      { x: frontElbow.x, y: frontElbow.y, part: 'arm_upper_front', point: 'elbow', color: '#f80', label: 'elbowF' },
+      { x: backElbow.x, y: backElbow.y, part: 'arm_upper_back', point: 'elbow', color: '#f88', label: 'elbowB' },
+      { x: frontHip.x, y: frontHip.y, part: 'torso', point: 'hipRight', color: '#0f0', label: 'hipR' },
+      { x: backHip.x, y: backHip.y, part: 'torso', point: 'hipLeft', color: '#0a0', label: 'hipL' },
+      { x: frontKnee.x, y: frontKnee.y, part: 'leg_upper_right', point: 'knee', color: '#ff0', label: 'kneeR' },
+      { x: backKnee.x, y: backKnee.y, part: 'leg_upper_left', point: 'knee', color: '#aa0', label: 'kneeL' },
+      { x: torsoX, y: torsoY, part: 'torso', point: 'pivot', color: '#fff', label: 'torso' },
+    ];
+
     ctx.lineWidth = 2;
-    // Neck - cyan
-    ctx.fillStyle = '#0ff';
-    ctx.beginPath(); ctx.arc(neckPos.x, neckPos.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Front shoulder - red
-    ctx.fillStyle = '#f00';
-    ctx.beginPath(); ctx.arc(frontShoulder.x, frontShoulder.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Front elbow - orange
-    ctx.fillStyle = '#f80';
-    ctx.beginPath(); ctx.arc(frontElbow.x, frontElbow.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Back shoulder - purple
-    ctx.fillStyle = '#f0f';
-    ctx.beginPath(); ctx.arc(backShoulder.x, backShoulder.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Back elbow - pink
-    ctx.fillStyle = '#f88';
-    ctx.beginPath(); ctx.arc(backElbow.x, backElbow.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Hips - green
-    ctx.fillStyle = '#0f0';
-    ctx.beginPath(); ctx.arc(frontHip.x, frontHip.y, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(backHip.x, backHip.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Knees - yellow
-    ctx.fillStyle = '#ff0';
-    ctx.beginPath(); ctx.arc(frontKnee.x, frontKnee.y, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(backKnee.x, backKnee.y, 5, 0, Math.PI * 2); ctx.fill();
-    // Torso center - white
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(torsoX, torsoY, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '10px monospace';
+
+    for (const joint of window.DEBUG_JOINTS_LIST) {
+      const isSelected = window.DEBUG_SELECTED &&
+        window.DEBUG_SELECTED.part === joint.part &&
+        window.DEBUG_SELECTED.point === joint.point;
+
+      // Draw selection ring
+      if (isSelected) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(joint.x, joint.y, 12, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Draw joint dot
+      ctx.fillStyle = joint.color;
+      ctx.beginPath();
+      ctx.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw label
+      ctx.fillStyle = '#fff';
+      ctx.fillText(joint.label, joint.x + 8, joint.y - 8);
+    }
   }
 }
 
@@ -2459,13 +2473,13 @@ function drawOutlinedText(text, x, y, fontSize, fillColor) {
   ctx.fillText(text, x, y);
 }
 
-// Draw word with character coloring
+// Draw word with character coloring (supports two-line wrapping)
 function drawWord(word, typed, x, y, fontSize) {
   const scaledSize = scale(fontSize);
   ctx.font = `bold ${scaledSize}px "Courier New", monospace`;
   const charWidth = ctx.measureText('W').width;
   const totalWidth = word.length * charWidth;
-  let startX = x - totalWidth / 2;
+  const maxWidth = canvas.width * 0.9;
 
   let shakeX = 0, shakeY = 0;
   const shaking = Date.now() < state.errorShakeUntil;
@@ -2476,31 +2490,69 @@ function drawWord(word, typed, x, y, fontSize) {
 
   const offset = scale(3);
 
-  for (let i = 0; i < word.length; i++) {
-    let fillColor = colors.textPrimary;
-    let displayChar = word[i];
-
-    if (i < typed.length) {
-      // Already typed - show green
-      fillColor = colors.textCorrect;
-    } else if (i === typed.length && state.wrongChar && shaking) {
-      // Current position with error - show the expected char in red
-      fillColor = colors.textError;
+  // Check if we need to split into two lines
+  let lines = [{ text: word, startIndex: 0 }];
+  if (totalWidth > maxWidth) {
+    // Find a space near the middle to split
+    const midPoint = Math.floor(word.length / 2);
+    let splitIndex = -1;
+    for (let i = midPoint; i >= 0; i--) {
+      if (word[i] === ' ') {
+        splitIndex = i;
+        break;
+      }
     }
+    if (splitIndex === -1) {
+      for (let i = midPoint; i < word.length; i++) {
+        if (word[i] === ' ') {
+          splitIndex = i;
+          break;
+        }
+      }
+    }
+    if (splitIndex !== -1) {
+      lines = [
+        { text: word.slice(0, splitIndex), startIndex: 0 },
+        { text: word.slice(splitIndex + 1), startIndex: splitIndex + 1 }
+      ];
+    }
+  }
 
-    const charX = startX + i * charWidth + charWidth / 2 + shakeX;
-    const charY = y + shakeY;
+  const lineHeight = scaledSize * 1.2;
+  const totalHeight = lines.length * lineHeight;
+  const startY = y - totalHeight / 2 + lineHeight / 2;
 
-    ctx.fillStyle = '#000';
-    ctx.textAlign = 'center';
-    ctx.fillText(displayChar, charX + offset, charY + offset);
+  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+    const line = lines[lineNum];
+    const lineWidth = line.text.length * charWidth;
+    const startX = x - lineWidth / 2;
+    const lineY = startY + lineNum * lineHeight;
 
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = scale(3);
-    ctx.strokeText(displayChar, charX, charY);
+    for (let i = 0; i < line.text.length; i++) {
+      const globalIndex = line.startIndex + i;
+      let fillColor = colors.textPrimary;
+      let displayChar = line.text[i];
 
-    ctx.fillStyle = fillColor;
-    ctx.fillText(displayChar, charX, charY);
+      if (globalIndex < typed.length) {
+        fillColor = colors.textCorrect;
+      } else if (globalIndex === typed.length && state.wrongChar && shaking) {
+        fillColor = colors.textError;
+      }
+
+      const charX = startX + i * charWidth + charWidth / 2 + shakeX;
+      const charY = lineY + shakeY;
+
+      ctx.fillStyle = '#000';
+      ctx.textAlign = 'center';
+      ctx.fillText(displayChar, charX + offset, charY + offset);
+
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = scale(3);
+      ctx.strokeText(displayChar, charX, charY);
+
+      ctx.fillStyle = fillColor;
+      ctx.fillText(displayChar, charX, charY);
+    }
   }
 }
 
@@ -2900,11 +2952,34 @@ hiddenInput.addEventListener('keydown', (e) => {
   }
 });
 
+// Debug joint editor state
+window.DEBUG_JOINTS = false;
+window.DEBUG_SELECTED = null; // { part: 'torso', point: 'shoulderFront' }
+window.DEBUG_JOINTS_LIST = []; // Populated during draw
+
 document.addEventListener('keydown', (e) => {
-  // Toggle debug joint visualization with D key
-  if (e.key === 'd' || e.key === 'D') {
+  // Toggle debug joint visualization with 0 key
+  if (e.key === '0') {
     window.DEBUG_JOINTS = !window.DEBUG_JOINTS;
-    console.log('Debug joints:', window.DEBUG_JOINTS ? 'ON' : 'OFF');
+    window.DEBUG_SELECTED = null;
+    console.log('Debug joints:', window.DEBUG_JOINTS ? 'ON - click joints to select, arrows to move' : 'OFF');
+  }
+
+  // Arrow keys to adjust selected joint
+  if (window.DEBUG_JOINTS && window.DEBUG_SELECTED) {
+    const { part, point } = window.DEBUG_SELECTED;
+    const config = skeleton[part][point];
+    let moved = false;
+
+    if (e.key === 'ArrowLeft') { config.x -= 1; moved = true; }
+    if (e.key === 'ArrowRight') { config.x += 1; moved = true; }
+    if (e.key === 'ArrowUp') { config.y -= 1; moved = true; }
+    if (e.key === 'ArrowDown') { config.y += 1; moved = true; }
+
+    if (moved) {
+      e.preventDefault();
+      console.log(`${part}.${point}: { x: ${config.x}, y: ${config.y} }`);
+    }
   }
 
   if (state.phase === 'playing') {
@@ -2919,6 +2994,37 @@ document.addEventListener('keydown', (e) => {
   if (canContinue && (e.key === ' ' || e.key === 'Enter')) {
     e.preventDefault();
     startCountdown();
+  }
+});
+
+// Click to select debug joints
+canvas.addEventListener('click', (e) => {
+  if (!window.DEBUG_JOINTS || window.DEBUG_JOINTS_LIST.length === 0) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  // Find closest joint within 20px
+  let closest = null;
+  let closestDist = 20;
+
+  for (const joint of window.DEBUG_JOINTS_LIST) {
+    const dx = joint.x - clickX;
+    const dy = joint.y - clickY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < closestDist) {
+      closest = joint;
+      closestDist = dist;
+    }
+  }
+
+  if (closest) {
+    window.DEBUG_SELECTED = { part: closest.part, point: closest.point };
+    const config = skeleton[closest.part][closest.point];
+    console.log(`Selected ${closest.part}.${closest.point}: { x: ${config.x}, y: ${config.y} } - use arrow keys to adjust`);
+  } else {
+    window.DEBUG_SELECTED = null;
   }
 });
 
