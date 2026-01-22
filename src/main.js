@@ -1295,7 +1295,7 @@ function createStick(pointA, pointB, length = null) {
 
 // Initialize ragdoll skeleton at a position
 function initRagdollSkeleton(baseX, baseY) {
-  const s = scale(1);
+  const s = scale(0.7); // Match standing cowboy scale
   const p = ragdoll.points;
 
   // Create points for the skeleton (positions relative to standing pose)
@@ -1431,6 +1431,19 @@ function updateRagdoll() {
       p.oldY = p.y + vy * ragdoll.bounce; // Bounce
       p.oldX = p.x - vx * ragdoll.groundFriction; // Ground friction
     }
+
+    // Wall collision (building facades at edges)
+    const leftWall = canvas.width * 0.18;
+    const rightWall = canvas.width * 0.82;
+
+    if (p.x < leftWall) {
+      p.x = leftWall;
+      p.oldX = p.x + vx * 0.6; // Bounce off wall (reverse and dampen)
+    }
+    if (p.x > rightWall) {
+      p.x = rightWall;
+      p.oldX = p.x + vx * 0.6; // Bounce off wall
+    }
   }
 
   // === CONSTRAINT SOLVING ===
@@ -1464,11 +1477,19 @@ function updateRagdoll() {
       }
     }
 
-    // Re-apply ground constraint after each iteration
+    // Re-apply ground and wall constraints after each iteration
+    const leftWall = canvas.width * 0.18;
+    const rightWall = canvas.width * 0.82;
     for (const name in ragdoll.points) {
       const p = ragdoll.points[name];
       if (p.y > groundY) {
         p.y = groundY;
+      }
+      if (p.x < leftWall) {
+        p.x = leftWall;
+      }
+      if (p.x > rightWall) {
+        p.x = rightWall;
       }
     }
   }
@@ -1764,7 +1785,8 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
 
   // Randomize hit location for varied death animations
   const hitDir = bulletVx > 0 ? 1 : -1;
-  const force = 8 + Math.random() * 6;
+  const force = 35 + Math.random() * 15; // BIG knockback
+  const upForce = 15 + Math.random() * 10; // Strong upward lift
   const p = ragdoll.points;
 
   // Pick random hit zone: 0=head, 1=chest, 2=gut, 3=shoulder
@@ -1773,54 +1795,61 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
   if (hitZone === 0) {
     // HEAD SHOT - head snaps back violently, body follows
     p.head.oldX = p.head.x - hitDir * force * 2.5;
-    p.head.oldY = p.head.y - force * 0.8; // Head jerks up and back
-    p.neck.oldX = p.neck.x - hitDir * force * 1.5;
-    p.chest.oldX = p.chest.x - hitDir * force * 0.8;
+    p.head.oldY = p.head.y - upForce * 1.5; // Head jerks up and back
+    p.neck.oldX = p.neck.x - hitDir * force * 1.8;
+    p.neck.oldY = p.neck.y - upForce * 0.8;
+    p.chest.oldX = p.chest.x - hitDir * force * 1.2;
+    p.chest.oldY = p.chest.y - upForce * 0.5;
     // Arms fly up
-    p.handF.oldX = p.handF.x + (Math.random() * 12 - 6);
-    p.handF.oldY = p.handF.y - force * 1.2;
-    p.handB.oldX = p.handB.x + (Math.random() * 12 - 6);
-    p.handB.oldY = p.handB.y - force * 0.8;
+    p.handF.oldX = p.handF.x + (Math.random() * 20 - 10);
+    p.handF.oldY = p.handF.y - upForce * 1.5;
+    p.handB.oldX = p.handB.x + (Math.random() * 20 - 10);
+    p.handB.oldY = p.handB.y - upForce * 1.2;
   } else if (hitZone === 1) {
     // CHEST SHOT - classic knockback, upper body takes it
-    p.chest.oldX = p.chest.x - hitDir * force * 1.8;
-    p.chest.oldY = p.chest.y - force * 0.3;
-    p.neck.oldX = p.neck.x - hitDir * force * 1.5;
-    p.head.oldX = p.head.x - hitDir * force * 1.2;
-    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 1.6;
-    p.shoulderB.oldX = p.shoulderB.x - hitDir * force * 1.6;
+    p.chest.oldX = p.chest.x - hitDir * force * 2.0;
+    p.chest.oldY = p.chest.y - upForce * 0.8;
+    p.neck.oldX = p.neck.x - hitDir * force * 1.8;
+    p.neck.oldY = p.neck.y - upForce * 0.6;
+    p.head.oldX = p.head.x - hitDir * force * 1.5;
+    p.head.oldY = p.head.y - upForce * 0.4;
+    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 1.8;
+    p.shoulderB.oldX = p.shoulderB.x - hitDir * force * 1.8;
     // Arms flail back
-    p.handF.oldX = p.handF.x - hitDir * force * 0.8;
-    p.handB.oldX = p.handB.x - hitDir * force * 0.5;
+    p.handF.oldX = p.handF.x - hitDir * force * 1.2;
+    p.handF.oldY = p.handF.y - upForce * 0.8;
+    p.handB.oldX = p.handB.x - hitDir * force * 0.8;
+    p.handB.oldY = p.handB.y - upForce * 0.6;
   } else if (hitZone === 2) {
-    // GUT SHOT - doubles over, then collapses
-    p.hip.oldX = p.hip.x - hitDir * force * 1.2;
-    p.hip.oldY = p.hip.y + force * 0.5; // Hip drops
-    p.chest.oldX = p.chest.x - hitDir * force * 0.4;
-    p.chest.oldY = p.chest.y + force * 0.8; // Chest folds forward
-    p.head.oldX = p.head.x - hitDir * force * 0.2;
-    p.head.oldY = p.head.y + force * 1.2; // Head drops down
+    // GUT SHOT - doubles over with knockback, then collapses
+    p.hip.oldX = p.hip.x - hitDir * force * 1.5;
+    p.hip.oldY = p.hip.y - upForce * 0.3;
+    p.chest.oldX = p.chest.x - hitDir * force * 0.8;
+    p.chest.oldY = p.chest.y + force * 0.4; // Chest folds forward
+    p.head.oldX = p.head.x - hitDir * force * 0.5;
+    p.head.oldY = p.head.y + force * 0.6; // Head drops down
     // Arms clutch toward gut
-    p.handF.oldY = p.handF.y + force * 0.6;
-    p.handB.oldY = p.handB.y + force * 0.6;
+    p.handF.oldY = p.handF.y + force * 0.4;
+    p.handB.oldY = p.handB.y + force * 0.4;
     // Knees buckle
-    p.kneeL.oldX = p.kneeL.x + hitDir * force * 0.4;
-    p.kneeR.oldX = p.kneeR.x + hitDir * force * 0.4;
+    p.kneeL.oldX = p.kneeL.x + hitDir * force * 0.5;
+    p.kneeR.oldX = p.kneeR.x + hitDir * force * 0.5;
   } else {
-    // SHOULDER SHOT - spins them around
-    const spinDir = Math.random() > 0.5 ? 1 : -1;
-    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 2.0;
-    p.shoulderF.oldY = p.shoulderF.y - force * 0.4;
-    p.shoulderB.oldX = p.shoulderB.x + hitDir * force * 0.8; // Opposite shoulder goes other way
-    p.chest.oldX = p.chest.x - hitDir * force * 1.0;
-    p.head.oldX = p.head.x - hitDir * force * 0.8;
-    // Hit arm flies back
-    p.elbowF.oldX = p.elbowF.x - hitDir * force * 2.5;
-    p.handF.oldX = p.handF.x - hitDir * force * 3.0;
-    p.handF.oldY = p.handF.y - force * 0.8;
-    // Creates a spin/twist
-    p.hipL.oldX = p.hipL.x + hitDir * force * 0.3;
-    p.hipR.oldX = p.hipR.x - hitDir * force * 0.3;
+    // SHOULDER SHOT - spins them around with big knockback
+    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 2.5;
+    p.shoulderF.oldY = p.shoulderF.y - upForce * 0.8;
+    p.shoulderB.oldX = p.shoulderB.x + hitDir * force * 1.2; // Opposite shoulder goes other way (spin)
+    p.chest.oldX = p.chest.x - hitDir * force * 1.5;
+    p.chest.oldY = p.chest.y - upForce * 0.5;
+    p.head.oldX = p.head.x - hitDir * force * 1.2;
+    p.head.oldY = p.head.y - upForce * 0.4;
+    // Hit arm flies back hard
+    p.elbowF.oldX = p.elbowF.x - hitDir * force * 3.0;
+    p.handF.oldX = p.handF.x - hitDir * force * 3.5;
+    p.handF.oldY = p.handF.y - upForce * 1.2;
+    // Creates a spin/twist - hips rotate opposite to shoulders
+    p.hipL.oldX = p.hipL.x + hitDir * force * 0.5;
+    p.hipR.oldX = p.hipR.x - hitDir * force * 0.5;
   }
 
   // All zones: arms get some random flail
@@ -1844,8 +1873,8 @@ function drawRagdoll(baseX, baseY, facingRight) {
   if (!ragdoll.points.head) return;
 
   ctx.save();
-  const s = scale(1);
-  const lineWidth = scale(3);
+  const s = scale(0.7); // Match standing cowboy scale
+  const lineWidth = scale(2);
 
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'round';
@@ -2206,8 +2235,8 @@ function drawCowboy(x, y, facingRight, armProgress, isPlayer) {
   ctx.save();
 
   const dir = facingRight ? 1 : -1;
-  const s = scale(1); // Base scale factor
-  const lineWidth = scale(3);
+  const s = scale(0.7); // Base scale factor (reduced to match sprite size)
+  const lineWidth = scale(2);
 
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'round';
@@ -2606,13 +2635,13 @@ function draw() {
   if (ragdoll.active && ragdoll.isPlayer) {
     drawRagdoll(playerX, cowboyY, true);
   } else {
-    drawSpriteCowboy(playerX, cowboyY, true, state.playerArmDisplay, true);
+    drawCowboy(playerX, cowboyY, true, state.playerArmDisplay, true);
   }
 
   if (ragdoll.active && !ragdoll.isPlayer) {
     drawRagdoll(enemyX, cowboyY, false);
   } else {
-    drawSpriteCowboy(enemyX, cowboyY, false, state.aiArmDisplay, false);
+    drawCowboy(enemyX, cowboyY, false, state.aiArmDisplay, false);
   }
 
   // Muzzle flash (positioned at gun height)
