@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cowboy Sprite Slicer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 10px; }
+    .container { display: flex; gap: 20px; flex-wrap: wrap; }
+    .canvas-container {
+      position: relative;
+      border: 2px solid #444;
+      background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 20px 20px;
+    }
+    canvas { display: block; }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      pointer-events: none;
+    }
+    .controls {
+      background: #252540;
+      padding: 20px;
+      border-radius: 8px;
+      min-width: 300px;
+    }
+    .part-item {
+      padding: 10px;
+      margin: 5px 0;
+      background: #333;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .part-item:hover { background: #444; }
+    .part-item.selected {
+      background: #4a5568;
+      border-left: 3px solid #63b3ed;
+    }
+    .part-item .name { font-weight: bold; }
+    .part-item .coords { font-size: 12px; color: #888; }
+    button {
+      background: #4299e1;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+      font-size: 14px;
+    }
+    button:hover { background: #3182ce; }
+    button.secondary { background: #48bb78; }
+    button.secondary:hover { background: #38a169; }
+    .input-row {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0;
+      align-items: center;
+    }
+    .input-row label { width: 60px; }
+    .input-row input {
+      width: 70px;
+      padding: 5px;
+      background: #1a1a2e;
+      border: 1px solid #444;
+      color: #eee;
+      border-radius: 4px;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .preview-item {
+      background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 10px 10px;
+      border: 1px solid #444;
+      padding: 5px;
+      text-align: center;
+    }
+    .preview-item img {
+      max-width: 100%;
+      max-height: 100px;
+    }
+    .preview-item .label { font-size: 10px; margin-top: 5px; }
+    #output {
+      background: #1a1a2e;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 15px;
+    }
+    .instructions {
+      background: #2d3748;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .instructions ul { margin-left: 20px; margin-top: 10px; }
+    .file-input-wrapper {
+      margin-bottom: 20px;
+    }
+    #fileInput {
+      display: none;
+    }
+    .drag-drop-zone {
+      border: 2px dashed #4299e1;
+      padding: 40px;
+      text-align: center;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .drag-drop-zone:hover, .drag-drop-zone.dragover {
+      background: rgba(66, 153, 225, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <h1>Cowboy Sprite Slicer</h1>
+
+  <div class="instructions">
+    <strong>Instructions:</strong>
+    <ul>
+      <li>Drop your cowboy PNG below or click to browse</li>
+      <li>Select a body part from the list, then click/drag on the image to adjust its bounding box</li>
+      <li>Use the coordinate inputs for precise adjustments</li>
+      <li>Click "Slice All & Download" to save all parts as PNGs</li>
+    </ul>
+  </div>
+
+  <div class="file-input-wrapper">
+    <input type="file" id="fileInput" accept="image/png">
+    <div class="drag-drop-zone" id="dropZone">
+      Drop your cowboy PNG here or click to browse
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="canvas-container">
+      <canvas id="mainCanvas"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="controls">
+      <h3>Body Parts</h3>
+      <div id="partsList"></div>
+
+      <h3 style="margin-top: 20px;">Selected Part Coordinates</h3>
+      <div class="input-row">
+        <label>X:</label><input type="number" id="inputX">
+        <label>Y:</label><input type="number" id="inputY">
+      </div>
+      <div class="input-row">
+        <label>Width:</label><input type="number" id="inputW">
+        <label>Height:</label><input type="number" id="inputH">
+      </div>
+      <div class="input-row">
+        <label>Pivot X:</label><input type="number" id="inputPX">
+        <label>Pivot Y:</label><input type="number" id="inputPY">
+      </div>
+
+      <div style="margin-top: 20px;">
+        <button onclick="sliceAll()" class="secondary">Slice All & Download</button>
+        <button onclick="copyPivots()">Copy Pivot Data</button>
+        <button onclick="resetToDefaults()">Reset Defaults</button>
+      </div>
+
+      <h3 style="margin-top: 20px;">Preview</h3>
+      <div class="preview-grid" id="previewGrid"></div>
+
+      <h3 style="margin-top: 20px;">Pivot Data (for game code)</h3>
+      <div id="output">Load an image to see pivot data...</div>
+    </div>
+  </div>
+
+  <script>
+    const mainCanvas = document.getElementById('mainCanvas');
+    const mainCtx = mainCanvas.getContext('2d');
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+
+    let img = null;
+    let selectedPart = null;
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let dragMode = null; // 'move', 'resize', 'pivot'
+
+    const PADDING = 4;
+
+    // Body parts with default coordinates for the cowboy image
+    // Assumes image is ~1024x1024, cowboy facing right, standing pose
+    // Adjust these by dragging on the canvas or editing the coordinate inputs
+    const bodyParts = {
+      head: { box: [340, 0, 180, 200], pivot: [90, 190], color: '#e74c3c' },
+      torso: { box: [355, 185, 130, 190], pivot: [65, 0], color: '#3498db' },
+      arm_upper_front: { box: [240, 220, 120, 130], pivot: [100, 20], color: '#e67e22' },
+      arm_lower_front: { box: [130, 310, 150, 200], pivot: [130, 15], color: '#f39c12' },
+      arm_upper_back: { box: [475, 220, 85, 120], pivot: [10, 20], color: '#9b59b6' },
+      arm_lower_back: { box: [505, 320, 80, 100], pivot: [15, 10], color: '#8e44ad' },
+      leg_upper_left: { box: [420, 365, 70, 140], pivot: [35, 10], color: '#2ecc71' },
+      leg_lower_left: { box: [420, 495, 80, 140], pivot: [40, 10], color: '#27ae60' },
+      leg_upper_right: { box: [350, 365, 75, 140], pivot: [40, 10], color: '#1abc9c' },
+      leg_lower_right: { box: [340, 495, 85, 140], pivot: [45, 10], color: '#16a085' },
+    };
+
+    // Store original defaults for reset
+    const defaultParts = JSON.parse(JSON.stringify(bodyParts));
+
+    function init() {
+      buildPartsList();
+      setupEventListeners();
+      selectPart('head');
+    }
+
+    function buildPartsList() {
+      const list = document.getElementById('partsList');
+      list.innerHTML = '';
+      for (const [name, data] of Object.entries(bodyParts)) {
+        const div = document.createElement('div');
+        div.className = 'part-item' + (name === selectedPart ? ' selected' : '');
+        div.innerHTML = `
+          <div class="name" style="color: ${data.color}">${name}</div>
+          <div class="coords">Box: ${data.box.join(', ')} | Pivot: ${data.pivot.join(', ')}</div>
+        `;
+        div.onclick = () => selectPart(name);
+        list.appendChild(div);
+      }
+    }
+
+    function selectPart(name) {
+      selectedPart = name;
+      buildPartsList();
+      updateInputs();
+      drawOverlay();
+    }
+
+    function updateInputs() {
+      if (!selectedPart) return;
+      const part = bodyParts[selectedPart];
+      document.getElementById('inputX').value = part.box[0];
+      document.getElementById('inputY').value = part.box[1];
+      document.getElementById('inputW').value = part.box[2];
+      document.getElementById('inputH').value = part.box[3];
+      document.getElementById('inputPX').value = part.pivot[0];
+      document.getElementById('inputPY').value = part.pivot[1];
+    }
+
+    function setupEventListeners() {
+      // File input
+      const fileInput = document.getElementById('fileInput');
+      const dropZone = document.getElementById('dropZone');
+
+      dropZone.onclick = () => fileInput.click();
+
+      fileInput.onchange = (e) => {
+        if (e.target.files[0]) loadImage(e.target.files[0]);
+      };
+
+      dropZone.ondragover = (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      };
+
+      dropZone.ondragleave = () => {
+        dropZone.classList.remove('dragover');
+      };
+
+      dropZone.ondrop = (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files[0]) loadImage(e.dataTransfer.files[0]);
+      };
+
+      // Coordinate inputs
+      ['inputX', 'inputY', 'inputW', 'inputH', 'inputPX', 'inputPY'].forEach(id => {
+        document.getElementById(id).onchange = updateFromInputs;
+      });
+
+      // Canvas interaction
+      overlay.onmousedown = startDrag;
+      overlay.onmousemove = onDrag;
+      overlay.onmouseup = endDrag;
+      overlay.onmouseleave = endDrag;
+    }
+
+    function loadImage(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img = new Image();
+        img.onload = () => {
+          mainCanvas.width = img.width;
+          mainCanvas.height = img.height;
+          overlay.width = img.width;
+          overlay.height = img.height;
+          overlay.style.pointerEvents = 'auto';
+
+          mainCtx.drawImage(img, 0, 0);
+          drawOverlay();
+          updateOutput();
+
+          document.getElementById('dropZone').innerHTML =
+            `Loaded: ${file.name} (${img.width} x ${img.height})`;
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function drawOverlay() {
+      if (!img) return;
+
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      for (const [name, data] of Object.entries(bodyParts)) {
+        const [x, y, w, h] = data.box;
+        const [px, py] = data.pivot;
+        const isSelected = name === selectedPart;
+
+        // Draw box
+        overlayCtx.strokeStyle = data.color;
+        overlayCtx.lineWidth = isSelected ? 3 : 1;
+        overlayCtx.setLineDash(isSelected ? [] : [5, 5]);
+        overlayCtx.strokeRect(x, y, w, h);
+
+        // Draw pivot point
+        overlayCtx.fillStyle = isSelected ? '#fff' : data.color;
+        overlayCtx.beginPath();
+        overlayCtx.arc(x + px, y + py, isSelected ? 6 : 4, 0, Math.PI * 2);
+        overlayCtx.fill();
+        overlayCtx.strokeStyle = '#000';
+        overlayCtx.lineWidth = 1;
+        overlayCtx.setLineDash([]);
+        overlayCtx.stroke();
+
+        // Label
+        if (isSelected) {
+          overlayCtx.fillStyle = data.color;
+          overlayCtx.font = 'bold 14px sans-serif';
+          overlayCtx.fillText(name, x + 5, y - 5);
+        }
+      }
+
+      // Draw resize handles for selected part
+      if (selectedPart) {
+        const [x, y, w, h] = bodyParts[selectedPart].box;
+        overlayCtx.fillStyle = '#fff';
+        overlayCtx.strokeStyle = '#000';
+        overlayCtx.lineWidth = 1;
+
+        // Corner handles
+        const handles = [
+          [x, y], [x + w, y], [x, y + h], [x + w, y + h]
+        ];
+        for (const [hx, hy] of handles) {
+          overlayCtx.fillRect(hx - 4, hy - 4, 8, 8);
+          overlayCtx.strokeRect(hx - 4, hy - 4, 8, 8);
+        }
+      }
+    }
+
+    function startDrag(e) {
+      if (!selectedPart || !img) return;
+
+      const rect = overlay.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const part = bodyParts[selectedPart];
+      const [bx, by, bw, bh] = part.box;
+      const [px, py] = part.pivot;
+
+      // Check if clicking pivot point
+      const pivotDist = Math.sqrt(Math.pow(x - (bx + px), 2) + Math.pow(y - (by + py), 2));
+      if (pivotDist < 10) {
+        dragMode = 'pivot';
+        isDragging = true;
+        dragStart = { x, y };
+        return;
+      }
+
+      // Check if clicking corner handles
+      const corners = [
+        { cx: bx, cy: by, resize: 'nw' },
+        { cx: bx + bw, cy: by, resize: 'ne' },
+        { cx: bx, cy: by + bh, resize: 'sw' },
+        { cx: bx + bw, cy: by + bh, resize: 'se' },
+      ];
+
+      for (const corner of corners) {
+        if (Math.abs(x - corner.cx) < 8 && Math.abs(y - corner.cy) < 8) {
+          dragMode = corner.resize;
+          isDragging = true;
+          dragStart = { x, y, box: [...part.box] };
+          return;
+        }
+      }
+
+      // Check if clicking inside box
+      if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+        dragMode = 'move';
+        isDragging = true;
+        dragStart = { x, y, box: [...part.box] };
+      }
+    }
+
+    function onDrag(e) {
+      if (!isDragging || !selectedPart) return;
+
+      const rect = overlay.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const dx = x - dragStart.x;
+      const dy = y - dragStart.y;
+
+      const part = bodyParts[selectedPart];
+
+      if (dragMode === 'move') {
+        part.box[0] = Math.max(0, dragStart.box[0] + dx);
+        part.box[1] = Math.max(0, dragStart.box[1] + dy);
+      } else if (dragMode === 'pivot') {
+        const [bx, by] = part.box;
+        part.pivot[0] = Math.max(0, x - bx);
+        part.pivot[1] = Math.max(0, y - by);
+      } else if (dragMode === 'se') {
+        part.box[2] = Math.max(10, dragStart.box[2] + dx);
+        part.box[3] = Math.max(10, dragStart.box[3] + dy);
+      } else if (dragMode === 'nw') {
+        const newW = dragStart.box[2] - dx;
+        const newH = dragStart.box[3] - dy;
+        if (newW > 10 && newH > 10) {
+          part.box[0] = dragStart.box[0] + dx;
+          part.box[1] = dragStart.box[1] + dy;
+          part.box[2] = newW;
+          part.box[3] = newH;
+        }
+      } else if (dragMode === 'ne') {
+        const newH = dragStart.box[3] - dy;
+        if (newH > 10) {
+          part.box[1] = dragStart.box[1] + dy;
+          part.box[2] = Math.max(10, dragStart.box[2] + dx);
+          part.box[3] = newH;
+        }
+      } else if (dragMode === 'sw') {
+        const newW = dragStart.box[2] - dx;
+        if (newW > 10) {
+          part.box[0] = dragStart.box[0] + dx;
+          part.box[2] = newW;
+          part.box[3] = Math.max(10, dragStart.box[3] + dy);
+        }
+      }
+
+      // Round values
+      part.box = part.box.map(v => Math.round(v));
+      part.pivot = part.pivot.map(v => Math.round(v));
+
+      updateInputs();
+      buildPartsList();
+      drawOverlay();
+    }
+
+    function endDrag() {
+      if (isDragging) {
+        updateOutput();
+      }
+      isDragging = false;
+      dragMode = null;
+    }
+
+    function updateFromInputs() {
+      if (!selectedPart) return;
+      const part = bodyParts[selectedPart];
+      part.box[0] = parseInt(document.getElementById('inputX').value) || 0;
+      part.box[1] = parseInt(document.getElementById('inputY').value) || 0;
+      part.box[2] = parseInt(document.getElementById('inputW').value) || 10;
+      part.box[3] = parseInt(document.getElementById('inputH').value) || 10;
+      part.pivot[0] = parseInt(document.getElementById('inputPX').value) || 0;
+      part.pivot[1] = parseInt(document.getElementById('inputPY').value) || 0;
+      buildPartsList();
+      drawOverlay();
+      updateOutput();
+    }
+
+    function sliceAll() {
+      if (!img) {
+        alert('Please load an image first');
+        return;
+      }
+
+      const previewGrid = document.getElementById('previewGrid');
+      previewGrid.innerHTML = '';
+
+      for (const [name, data] of Object.entries(bodyParts)) {
+        const [x, y, w, h] = data.box;
+
+        // Create canvas for this part with padding
+        const partCanvas = document.createElement('canvas');
+        partCanvas.width = w + PADDING * 2;
+        partCanvas.height = h + PADDING * 2;
+        const partCtx = partCanvas.getContext('2d');
+
+        // Draw the sliced portion
+        partCtx.drawImage(
+          img,
+          x, y, w, h,
+          PADDING, PADDING, w, h
+        );
+
+        // Create download link
+        const dataUrl = partCanvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = `${name}.png`;
+        link.href = dataUrl;
+        link.click();
+
+        // Add to preview
+        const previewItem = document.createElement('div');
+        previewItem.className = 'preview-item';
+        previewItem.innerHTML = `
+          <img src="${dataUrl}" alt="${name}">
+          <div class="label">${name}<br>${partCanvas.width}x${partCanvas.height}</div>
+        `;
+        previewGrid.appendChild(previewItem);
+      }
+
+      // Also download manifest
+      downloadManifest();
+    }
+
+    function downloadManifest() {
+      const manifest = {
+        padding: PADDING,
+        parts: {}
+      };
+
+      for (const [name, data] of Object.entries(bodyParts)) {
+        const [x, y, w, h] = data.box;
+        manifest.parts[name] = {
+          file: `${name}.png`,
+          size: [w + PADDING * 2, h + PADDING * 2],
+          pivot: [data.pivot[0] + PADDING, data.pivot[1] + PADDING],
+          originalBox: data.box
+        };
+      }
+
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.download = 'manifest.json';
+      link.href = URL.createObjectURL(blob);
+      link.click();
+    }
+
+    function updateOutput() {
+      const output = document.getElementById('output');
+
+      let code = `// Pivot points (relative to each sprite, including ${PADDING}px padding)\nconst SPRITE_PIVOTS = {\n`;
+
+      for (const [name, data] of Object.entries(bodyParts)) {
+        const [x, y, w, h] = data.box;
+        const px = data.pivot[0] + PADDING;
+        const py = data.pivot[1] + PADDING;
+        code += `  ${name}: { x: ${px}, y: ${py}, width: ${w + PADDING * 2}, height: ${h + PADDING * 2} },\n`;
+      }
+
+      code += `};\n\n// Hierarchy\n`;
+      code += `// torso (root)\n`;
+      code += `//   head -> neck attachment\n`;
+      code += `//   arm_upper_front -> front shoulder\n`;
+      code += `//     arm_lower_front -> elbow\n`;
+      code += `//   arm_upper_back -> back shoulder\n`;
+      code += `//     arm_lower_back -> elbow\n`;
+      code += `//   leg_upper_right -> right hip\n`;
+      code += `//     leg_lower_right -> knee\n`;
+      code += `//   leg_upper_left -> left hip\n`;
+      code += `//     leg_lower_left -> knee\n`;
+
+      output.textContent = code;
+    }
+
+    function copyPivots() {
+      const output = document.getElementById('output').textContent;
+      navigator.clipboard.writeText(output).then(() => {
+        alert('Pivot data copied to clipboard!');
+      });
+    }
+
+    function resetToDefaults() {
+      for (const [name, data] of Object.entries(defaultParts)) {
+        bodyParts[name].box = [...data.box];
+        bodyParts[name].pivot = [...data.pivot];
+      }
+      buildPartsList();
+      updateInputs();
+      drawOverlay();
+      updateOutput();
+    }
+
+    init();
+  </script>
+</body>
+</html>

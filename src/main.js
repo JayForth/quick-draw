@@ -1,5 +1,5 @@
 // Quick Draw - Typing Showdown Game
-const VERSION = '2.1.0'; // Parallax clouds
+const VERSION = '3.2.0'; // Randomized hit zones for varied deaths
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -42,6 +42,249 @@ let foregroundLoaded = false;
 foregroundImage.onload = () => {
   foregroundLoaded = true;
 };
+
+// ============================================
+// SPRITE-BASED COWBOY SYSTEM
+// ============================================
+
+// Load all cowboy sprite parts
+const cowboySprites = {};
+const spriteNames = [
+  'head', 'torso',
+  'arm_upper_front', 'arm_lower_front',
+  'arm_upper_back', 'arm_lower_back',
+  'leg_upper_left', 'leg_lower_left',
+  'leg_upper_right', 'leg_lower_right'
+];
+let spritesLoaded = 0;
+
+spriteNames.forEach(name => {
+  const img = new Image();
+  img.src = `/sprites/player/${name}.png`;
+  img.onload = () => {
+    spritesLoaded++;
+    console.log(`Loaded sprite: ${name} (${spritesLoaded}/${spriteNames.length})`);
+  };
+  cowboySprites[name] = img;
+});
+
+// Skeleton configuration - pivot points and attachment points
+// Pivots are relative to each sprite's top-left corner
+// ACTUAL SPRITE DIMENSIONS:
+// head: 170x120, torso: 99x145, arm_upper_front: 73x78, arm_lower_front: 83x188
+// arm_upper_back: 36x72, arm_lower_back: 101x111
+// leg_upper_left: 67x122, leg_lower_left: 85x142
+// leg_upper_right: 47x145, leg_lower_right: 86x95
+const skeleton = {
+  baseScale: 0.22,
+
+  torso: {  // 99 x 145
+    pivot: { x: 50, y: 72 },          // Center of torso
+    neck: { x: 50, y: 0 },            // Top center where head attaches
+    shoulderFront: { x: 5, y: 25 },   // Left edge for front arm
+    shoulderBack: { x: 94, y: 25 },   // Right edge for back arm
+    hipRight: { x: 30, y: 142 },      // Front leg
+    hipLeft: { x: 68, y: 142 },       // Back leg
+  },
+
+  head: {  // 170 x 120
+    pivot: { x: 85, y: 115 },  // Bottom center (neck attachment)
+  },
+
+  arm_upper_front: {  // 73 x 78
+    pivot: { x: 55, y: 15 },   // Shoulder (top right area)
+    elbow: { x: 25, y: 68 },   // Bottom where forearm attaches
+  },
+
+  arm_lower_front: {  // 83 x 188
+    pivot: { x: 45, y: 15 },   // Elbow (top center)
+  },
+
+  arm_upper_back: {  // 36 x 72
+    pivot: { x: 18, y: 10 },   // Shoulder (top)
+    elbow: { x: 18, y: 65 },   // Bottom where forearm attaches
+  },
+
+  arm_lower_back: {  // 101 x 111
+    pivot: { x: 50, y: 10 },   // Elbow (top)
+  },
+
+  leg_upper_right: {  // 47 x 145
+    pivot: { x: 24, y: 8 },    // Hip (top)
+    knee: { x: 24, y: 138 },   // Bottom where shin attaches
+  },
+
+  leg_lower_right: {  // 86 x 95
+    pivot: { x: 43, y: 8 },    // Knee (top)
+  },
+
+  leg_upper_left: {  // 67 x 122
+    pivot: { x: 34, y: 8 },    // Hip (top)
+    knee: { x: 34, y: 115 },   // Bottom where shin attaches
+  },
+
+  leg_lower_left: {  // 85 x 142
+    pivot: { x: 42, y: 8 },    // Knee (top)
+  },
+};
+
+// Draw a sprite at a position with rotation around its pivot
+function drawSprite(spriteName, x, y, rotation, scale, flipX = false) {
+  const sprite = cowboySprites[spriteName];
+  if (!sprite || !sprite.complete) return;
+
+  const config = skeleton[spriteName];
+  if (!config) return;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  if (flipX) {
+    ctx.scale(-1, 1);
+  }
+
+  ctx.rotate(rotation);
+
+  // Draw sprite centered on its pivot point
+  const px = config.pivot.x * scale;
+  const py = config.pivot.y * scale;
+  const w = sprite.width * scale;
+  const h = sprite.height * scale;
+
+  ctx.drawImage(sprite, -px, -py, w, h);
+
+  ctx.restore();
+}
+
+// Draw the sprite-based cowboy with skeletal animation
+function drawSpriteCowboy(x, y, facingRight, armProgress, isPlayer) {
+  const s = skeleton.baseScale * (canvas.height / 400);  // Scale based on canvas
+  const flip = !facingRight;
+
+  // Check sprites are loaded
+  const torsoImg = cowboySprites.torso;
+  if (!torsoImg || !torsoImg.complete) return;
+
+  // Get sprite dimensions for positioning calculations
+  const legUpperH = (cowboySprites.leg_upper_right?.height || 140) * s;
+  const legLowerH = (cowboySprites.leg_lower_right?.height || 140) * s;
+  const torsoH = (torsoImg.height || 180) * s;
+
+  // Calculate total height and position torso so feet are at y
+  const totalLegHeight = legUpperH * 0.85 + legLowerH * 0.85; // Overlap at joints
+  const torsoY = y - totalLegHeight - torsoH * 0.45;
+  const torsoX = x;
+
+  // Arm animation: from resting (pointing down) to shooting (horizontal)
+  const armRestAngle = Math.PI * 0.4;  // ~72 degrees down
+  const armShootAngle = -Math.PI * 0.05;  // Slightly up when shooting
+  const frontArmAngle = armRestAngle + (armShootAngle - armRestAngle) * armProgress;
+
+  // Back arm stays mostly stationary
+  const backArmAngle = Math.PI * 0.3;
+
+  // Forearm follows upper arm with bend
+  const frontForearmAngle = frontArmAngle * 0.7;
+  const backForearmAngle = backArmAngle * 0.8;
+
+  // Direction multiplier for rotation
+  const dir = facingRight ? 1 : -1;
+
+  // Helper to get attachment point relative to torso center
+  function getTorsoAttach(point) {
+    const dx = (point.x - skeleton.torso.pivot.x) * s;
+    return {
+      x: torsoX + (facingRight ? dx : -dx),
+      y: torsoY + (point.y - skeleton.torso.pivot.y) * s
+    };
+  }
+
+  // === DRAW ORDER (back to front) ===
+
+  // 1. Back leg (left leg when facing right)
+  const backHip = getTorsoAttach(skeleton.torso.hipLeft);
+  drawSprite('leg_upper_left', backHip.x, backHip.y, 0, s, flip);
+
+  const backKneeOffset = (skeleton.leg_upper_left.knee.y - skeleton.leg_upper_left.pivot.y) * s;
+  const backKnee = {
+    x: backHip.x,
+    y: backHip.y + backKneeOffset
+  };
+  drawSprite('leg_lower_left', backKnee.x, backKnee.y, 0, s, flip);
+
+  // 2. Back arm
+  const backShoulder = getTorsoAttach(skeleton.torso.shoulderBack);
+  const backArmLen = (skeleton.arm_upper_back.elbow.y - skeleton.arm_upper_back.pivot.y) * s;
+
+  drawSprite('arm_upper_back', backShoulder.x, backShoulder.y, dir * backArmAngle, s, flip);
+
+  const backElbow = {
+    x: backShoulder.x + Math.sin(dir * backArmAngle) * backArmLen,
+    y: backShoulder.y + Math.cos(dir * backArmAngle) * backArmLen
+  };
+  drawSprite('arm_lower_back', backElbow.x, backElbow.y, dir * backForearmAngle, s, flip);
+
+  // 3. Torso
+  drawSprite('torso', torsoX, torsoY, 0, s, flip);
+
+  // 4. Head
+  const neckPos = getTorsoAttach(skeleton.torso.neck);
+  drawSprite('head', neckPos.x, neckPos.y, 0, s, flip);
+
+  // 5. Front leg (right leg when facing right)
+  const frontHip = getTorsoAttach(skeleton.torso.hipRight);
+  drawSprite('leg_upper_right', frontHip.x, frontHip.y, 0, s, flip);
+
+  const frontKneeOffset = (skeleton.leg_upper_right.knee.y - skeleton.leg_upper_right.pivot.y) * s;
+  const frontKnee = {
+    x: frontHip.x,
+    y: frontHip.y + frontKneeOffset
+  };
+  drawSprite('leg_lower_right', frontKnee.x, frontKnee.y, 0, s, flip);
+
+  // 6. Front arm (gun arm) - animates based on typing progress
+  const frontShoulder = getTorsoAttach(skeleton.torso.shoulderFront);
+  const frontArmLen = (skeleton.arm_upper_front.elbow.y - skeleton.arm_upper_front.pivot.y) * s;
+
+  drawSprite('arm_upper_front', frontShoulder.x, frontShoulder.y, dir * frontArmAngle, s, flip);
+
+  const frontElbow = {
+    x: frontShoulder.x + Math.sin(dir * frontArmAngle) * frontArmLen,
+    y: frontShoulder.y + Math.cos(dir * frontArmAngle) * frontArmLen
+  };
+  drawSprite('arm_lower_front', frontElbow.x, frontElbow.y, dir * frontForearmAngle, s, flip);
+
+  // DEBUG: Draw joint positions (toggle with D key)
+  if (window.DEBUG_JOINTS) {
+    ctx.lineWidth = 2;
+    // Neck - cyan
+    ctx.fillStyle = '#0ff';
+    ctx.beginPath(); ctx.arc(neckPos.x, neckPos.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Front shoulder - red
+    ctx.fillStyle = '#f00';
+    ctx.beginPath(); ctx.arc(frontShoulder.x, frontShoulder.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Front elbow - orange
+    ctx.fillStyle = '#f80';
+    ctx.beginPath(); ctx.arc(frontElbow.x, frontElbow.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Back shoulder - purple
+    ctx.fillStyle = '#f0f';
+    ctx.beginPath(); ctx.arc(backShoulder.x, backShoulder.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Back elbow - pink
+    ctx.fillStyle = '#f88';
+    ctx.beginPath(); ctx.arc(backElbow.x, backElbow.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Hips - green
+    ctx.fillStyle = '#0f0';
+    ctx.beginPath(); ctx.arc(frontHip.x, frontHip.y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(backHip.x, backHip.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Knees - yellow
+    ctx.fillStyle = '#ff0';
+    ctx.beginPath(); ctx.arc(frontKnee.x, frontKnee.y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(backKnee.x, backKnee.y, 5, 0, Math.PI * 2); ctx.fill();
+    // Torso center - white
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(torsoX, torsoY, 5, 0, Math.PI * 2); ctx.fill();
+  }
+}
 
 // Stars for night sky (generated once)
 const stars = [];
@@ -109,9 +352,10 @@ function initClouds() {
 }
 
 function updateClouds() {
+  const speedMult = getTransitionSpeedMultiplier() * getWeatherWindMultiplier();
   // Update back layer
   for (const cloud of cloudsBack) {
-    cloud.x += cloud.speed;
+    cloud.x += cloud.speed * speedMult;
     if (cloud.x > 1.3) {
       cloud.x = -0.3;
       cloud.y = 0.08 + Math.random() * 0.15;
@@ -120,7 +364,7 @@ function updateClouds() {
   }
   // Update front layer
   for (const cloud of cloudsFront) {
-    cloud.x += cloud.speed;
+    cloud.x += cloud.speed * speedMult;
     if (cloud.x > 1.3) {
       cloud.x = -0.3;
       cloud.y = 0.12 + Math.random() * 0.2;
@@ -214,11 +458,12 @@ function createDustParticle(randomX = false) {
 }
 
 function updateDust() {
+  const speedMult = getTransitionSpeedMultiplier() * getWeatherWindMultiplier();
   for (let i = 0; i < dustParticles.length; i++) {
     const p = dustParticles[i];
-    p.wobble += p.wobbleSpeed;
-    p.x += p.speedX;
-    p.y += p.speedY + Math.sin(p.wobble) * 0.3;
+    p.wobble += p.wobbleSpeed * speedMult;
+    p.x += p.speedX * speedMult;
+    p.y += (p.speedY + Math.sin(p.wobble) * 0.3) * speedMult;
 
     // Reset when off screen
     if (p.x < -10) {
@@ -228,7 +473,7 @@ function updateDust() {
 }
 
 function drawDust() {
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  const palette = getInterpolatedPalette();
   // Warmer dust during day, cooler at night
   const dustColor = palette.isNight ? '#8090A0' : '#d4a76a';
 
@@ -264,9 +509,13 @@ function createTumbleweed() {
 
 function updateTumbleweeds() {
   const now = Date.now();
+  const speedMult = getTransitionSpeedMultiplier() * getWeatherWindMultiplier();
 
-  // Spawn new tumbleweed occasionally
-  if (now - lastTumbleweedTime > TUMBLEWEED_INTERVAL && tumbleweeds.length < 2) {
+  // Spawn new tumbleweed occasionally (more often in windy weather)
+  const spawnInterval = state.weather.type === 'wind' ? TUMBLEWEED_INTERVAL * 0.3 : TUMBLEWEED_INTERVAL;
+  const maxTumbleweeds = state.weather.type === 'wind' ? 5 : 2;
+
+  if (now - lastTumbleweedTime > spawnInterval && tumbleweeds.length < maxTumbleweeds) {
     tumbleweeds.push(createTumbleweed());
     lastTumbleweedTime = now;
   }
@@ -274,10 +523,10 @@ function updateTumbleweeds() {
   // Update existing tumbleweeds
   for (let i = tumbleweeds.length - 1; i >= 0; i--) {
     const t = tumbleweeds[i];
-    t.x += t.speedX;
-    t.rotation += t.rotationSpeed;
-    t.bouncePhase += 0.15;
-    t.y += Math.sin(t.bouncePhase) * 0.5; // Gentle bounce
+    t.x += t.speedX * speedMult;
+    t.rotation += t.rotationSpeed * speedMult;
+    t.bouncePhase += 0.15 * speedMult;
+    t.y += Math.sin(t.bouncePhase) * 0.5 * speedMult; // Gentle bounce
 
     // Remove when off screen
     if ((t.speedX > 0 && t.x > canvas.width + t.size * 2) ||
@@ -288,7 +537,7 @@ function updateTumbleweeds() {
 }
 
 function drawTumbleweeds() {
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  const palette = getInterpolatedPalette();
   // Darker tumbleweed color at night
   const tumbleweedColor = palette.isNight ? '#5A4535' : '#8B7355';
 
@@ -332,9 +581,10 @@ let glintPhase = 0;
 const glintSpeed = 0.02;
 
 function drawSunGlint() {
-  glintPhase += glintSpeed;
+  const speedMult = getTransitionSpeedMultiplier();
+  glintPhase += glintSpeed * speedMult;
 
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  const palette = getInterpolatedPalette();
   const sunX = canvas.width * 0.5;
   const sunY = canvas.height * palette.sunY;
 
@@ -396,10 +646,11 @@ function initDustMotes() {
 }
 
 function updateDustMotes() {
+  const speedMult = getTransitionSpeedMultiplier() * getWeatherWindMultiplier();
   for (const m of dustMotes) {
-    m.driftY += 0.02;
-    m.x += m.speedX;
-    m.y += Math.sin(m.driftY) * 0.3;
+    m.driftY += 0.02 * speedMult;
+    m.x += m.speedX * speedMult;
+    m.y += Math.sin(m.driftY) * 0.3 * speedMult;
 
     // Fade in/out
     if (!m.fading) {
@@ -426,7 +677,7 @@ function updateDustMotes() {
 }
 
 function drawDustMotes() {
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  const palette = getInterpolatedPalette();
 
   for (const m of dustMotes) {
     if (m.opacity <= 0) continue;
@@ -498,6 +749,371 @@ const skyPalettes = [
   { top: '#151525', mid: '#2A2A40', bottom: '#3D3D55', sun: '#C8C8C8', sunGlow: '#808080', sunY: 0.45, isNight: true, tint: '#2A1A4A', tintOpacity: 0.15 },     // 9: Pre-dawn
 ];
 
+// ============================================
+// SKY TRANSITION HELPERS
+// ============================================
+
+// Convert hex (#RRGGBB) to {r, g, b}
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16),
+  } : { r: 0, g: 0, b: 0 };
+}
+
+// Convert {r, g, b} to hex string
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(x => {
+    const hex = Math.round(Math.max(0, Math.min(255, x))).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  }).join('');
+}
+
+// Lerp between two hex colors
+function lerpColor(hex1, hex2, t) {
+  const c1 = hexToRgb(hex1);
+  const c2 = hexToRgb(hex2);
+  return rgbToHex(
+    c1.r + (c2.r - c1.r) * t,
+    c1.g + (c2.g - c1.g) * t,
+    c1.b + (c2.b - c1.b) * t
+  );
+}
+
+// Lerp between two numbers
+function lerpNumber(a, b, t) {
+  return a + (b - a) * t;
+}
+
+// Get speed multiplier for "fast forward" effect during transitions
+function getTransitionSpeedMultiplier() {
+  if (!state.skyTransition.active) return 1;
+  return 8; // 8x speed during transition
+}
+
+// Get the current interpolated palette (handles transitions)
+function getInterpolatedPalette() {
+  const trans = state.skyTransition;
+
+  // If no transition active, return current palette directly
+  if (!trans.active) {
+    const palette = skyPalettes[state.currentBg % skyPalettes.length];
+    return {
+      ...palette,
+      starOpacity: palette.isNight ? 1 : 0,
+      transitioning: false,
+    };
+  }
+
+  // Calculate t (0-1) from elapsed time
+  const elapsed = Date.now() - trans.startTime;
+  const t = Math.min(1, elapsed / trans.duration);
+
+  const from = skyPalettes[trans.fromIndex % skyPalettes.length];
+  const to = skyPalettes[trans.toIndex % skyPalettes.length];
+
+  // Calculate star opacity for smooth fade in/out
+  const fromStarOpacity = from.isNight ? 1 : 0;
+  const toStarOpacity = to.isNight ? 1 : 0;
+
+  // Check if we're crossing day/night boundary
+  const crossingDayNight = from.isNight !== to.isNight;
+
+  // Celestial body positions during day/night transition:
+  // - Outgoing body sinks below horizon (goes from current pos to ~0.7)
+  // - Incoming body descends from top (goes from ~-0.1 to target pos)
+  let outgoingSunY, incomingSunY, outgoingOpacity, incomingOpacity;
+
+  if (crossingDayNight) {
+    // Outgoing body sinks (first half of transition it's visible, then fades)
+    outgoingSunY = lerpNumber(from.sunY, 0.7, t);
+    outgoingOpacity = Math.max(0, 1 - t * 1.5); // Fades out by t=0.67
+
+    // Incoming body descends from above (starts appearing after t=0.3)
+    const incomingT = Math.max(0, (t - 0.3) / 0.7); // 0 until t=0.3, then 0-1
+    incomingSunY = lerpNumber(-0.1, to.sunY, incomingT);
+    incomingOpacity = Math.min(1, (t - 0.2) * 2); // Fades in starting at t=0.2
+  } else {
+    // Same celestial body, just moving position
+    outgoingSunY = lerpNumber(from.sunY, to.sunY, t);
+    outgoingOpacity = 1;
+    incomingSunY = 0;
+    incomingOpacity = 0;
+  }
+
+  // Interpolate all palette properties
+  return {
+    top: lerpColor(from.top, to.top, t),
+    mid: lerpColor(from.mid, to.mid, t),
+    bottom: lerpColor(from.bottom, to.bottom, t),
+    sun: lerpColor(from.sun, to.sun, t),
+    sunGlow: lerpColor(from.sunGlow, to.sunGlow, t),
+    sunY: outgoingSunY, // Main body position (outgoing during day/night cross)
+    isNight: t < 0.5 ? from.isNight : to.isNight, // Switch at midpoint
+    starOpacity: lerpNumber(fromStarOpacity, toStarOpacity, t), // Smooth star fade
+    tint: from.tint && to.tint ? lerpColor(from.tint, to.tint, t) :
+          (t < 0.5 ? from.tint : to.tint), // Handle null tints
+    tintOpacity: lerpNumber(from.tintOpacity, to.tintOpacity, t),
+    // Transition-specific properties for celestial body rendering
+    transitioning: true,
+    crossingDayNight,
+    outgoingBody: {
+      color: from.sun,
+      glow: from.sunGlow,
+      y: outgoingSunY,
+      opacity: outgoingOpacity,
+      isNight: from.isNight,
+    },
+    incomingBody: {
+      color: to.sun,
+      glow: to.sunGlow,
+      y: incomingSunY,
+      opacity: incomingOpacity,
+      isNight: to.isNight,
+    },
+  };
+}
+
+// Update sky transition state
+function updateSkyTransition() {
+  if (!state.skyTransition.active) return;
+
+  const elapsed = Date.now() - state.skyTransition.startTime;
+  if (elapsed >= state.skyTransition.duration) {
+    // Transition complete
+    state.currentBg = state.skyTransition.toIndex;
+    state.skyTransition.active = false;
+  }
+}
+
+// ============================================
+// END SKY TRANSITION HELPERS
+// ============================================
+
+// ============================================
+// WEATHER SYSTEM
+// ============================================
+
+const WEATHER_CHANCE = 0.15; // 15% chance of weather each round
+
+const weatherTypes = {
+  dust_storm: {
+    name: 'Dust Storm',
+    tint: '#8B6914',
+    tintOpacity: 0.15,
+    particleCount: 120,
+    windMultiplier: 3,
+    visibility: 0.7,
+  },
+  rain: {
+    name: 'Rain',
+    tint: '#4A6B8A',
+    tintOpacity: 0.12,
+    particleCount: 200,
+    windMultiplier: 1.2,
+    visibility: 0.85,
+  },
+  wind: {
+    name: 'Strong Wind',
+    tint: null,
+    tintOpacity: 0,
+    particleCount: 60,
+    windMultiplier: 4,
+    visibility: 1,
+  },
+};
+
+// Initialize weather for a new round
+function initWeather() {
+  // Clear previous weather
+  state.weather.particles = [];
+
+  // Random chance for weather
+  if (Math.random() > WEATHER_CHANCE) {
+    state.weather.type = null;
+    state.weather.intensity = 0;
+    return;
+  }
+
+  // Pick random weather type
+  const types = Object.keys(weatherTypes);
+  state.weather.type = types[Math.floor(Math.random() * types.length)];
+  state.weather.intensity = 0.6 + Math.random() * 0.4; // 0.6-1.0
+
+  // Create weather particles
+  const config = weatherTypes[state.weather.type];
+  const count = Math.floor(config.particleCount * state.weather.intensity);
+
+  for (let i = 0; i < count; i++) {
+    state.weather.particles.push(createWeatherParticle(state.weather.type, true));
+  }
+}
+
+// Create a single weather particle
+function createWeatherParticle(type, randomX = false) {
+  const startX = randomX ? Math.random() * canvas.width : canvas.width + Math.random() * 100;
+
+  if (type === 'rain') {
+    return {
+      x: randomX ? Math.random() * canvas.width : Math.random() * canvas.width * 1.5,
+      y: randomX ? Math.random() * canvas.height : -Math.random() * 100,
+      length: 10 + Math.random() * 15,
+      speedX: -1 - Math.random() * 2,
+      speedY: 12 + Math.random() * 8,
+      opacity: 0.3 + Math.random() * 0.4,
+    };
+  } else if (type === 'dust_storm') {
+    return {
+      x: startX,
+      y: Math.random() * canvas.height,
+      size: 2 + Math.random() * 6,
+      speedX: -4 - Math.random() * 6,
+      speedY: (Math.random() - 0.5) * 2,
+      opacity: 0.2 + Math.random() * 0.4,
+      wobble: Math.random() * Math.PI * 2,
+    };
+  } else { // wind - debris/leaves
+    return {
+      x: startX,
+      y: Math.random() * canvas.height * 0.8,
+      size: 3 + Math.random() * 5,
+      speedX: -6 - Math.random() * 8,
+      speedY: (Math.random() - 0.5) * 3,
+      rotation: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.3,
+      opacity: 0.4 + Math.random() * 0.4,
+    };
+  }
+}
+
+// Update weather particles
+function updateWeather() {
+  if (!state.weather.type) return;
+
+  const config = weatherTypes[state.weather.type];
+  const speedMult = getTransitionSpeedMultiplier();
+
+  for (let i = state.weather.particles.length - 1; i >= 0; i--) {
+    const p = state.weather.particles[i];
+
+    if (state.weather.type === 'rain') {
+      p.x += p.speedX * speedMult;
+      p.y += p.speedY * speedMult;
+
+      // Reset when off screen
+      if (p.y > canvas.height || p.x < -50) {
+        state.weather.particles[i] = createWeatherParticle('rain', false);
+        state.weather.particles[i].y = -Math.random() * 50;
+        state.weather.particles[i].x = Math.random() * canvas.width * 1.5;
+      }
+    } else if (state.weather.type === 'dust_storm') {
+      p.wobble += 0.05 * speedMult;
+      p.x += p.speedX * speedMult;
+      p.y += (p.speedY + Math.sin(p.wobble) * 1.5) * speedMult;
+
+      // Reset when off screen
+      if (p.x < -20) {
+        state.weather.particles[i] = createWeatherParticle('dust_storm', false);
+      }
+    } else { // wind
+      p.x += p.speedX * speedMult;
+      p.y += p.speedY * speedMult;
+      p.rotation += p.rotSpeed * speedMult;
+
+      // Slight wave motion
+      p.y += Math.sin(p.x * 0.02) * 0.5 * speedMult;
+
+      // Reset when off screen
+      if (p.x < -20) {
+        state.weather.particles[i] = createWeatherParticle('wind', false);
+      }
+    }
+  }
+}
+
+// Draw weather effects
+function drawWeather() {
+  if (!state.weather.type) return;
+
+  const config = weatherTypes[state.weather.type];
+  const palette = getInterpolatedPalette();
+
+  if (state.weather.type === 'rain') {
+    ctx.strokeStyle = palette.isNight ? '#6688AA' : '#8899BB';
+    ctx.lineWidth = 1.5;
+
+    for (const p of state.weather.particles) {
+      ctx.globalAlpha = p.opacity;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + p.speedX * 0.5, p.y + p.length);
+      ctx.stroke();
+    }
+  } else if (state.weather.type === 'dust_storm') {
+    for (const p of state.weather.particles) {
+      ctx.globalAlpha = p.opacity;
+      ctx.fillStyle = palette.isNight ? '#8B7355' : '#C4A574';
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else { // wind - debris
+    for (const p of state.weather.particles) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation);
+      ctx.globalAlpha = p.opacity;
+
+      // Draw leaf/debris shape
+      ctx.fillStyle = palette.isNight ? '#4A4035' : '#7A6B55';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, p.size, p.size * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// Draw weather overlay (tint/fog)
+function drawWeatherOverlay() {
+  if (!state.weather.type) return;
+
+  const config = weatherTypes[state.weather.type];
+
+  if (config.tint && config.tintOpacity > 0) {
+    ctx.save();
+    ctx.globalAlpha = config.tintOpacity * state.weather.intensity;
+    ctx.fillStyle = config.tint;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+
+  // Dust storm gets extra haze at bottom
+  if (state.weather.type === 'dust_storm') {
+    const gradient = ctx.createLinearGradient(0, canvas.height * 0.5, 0, canvas.height);
+    gradient.addColorStop(0, 'rgba(139, 105, 20, 0)');
+    gradient.addColorStop(1, `rgba(139, 105, 20, ${0.2 * state.weather.intensity})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+// Get weather wind multiplier for other particles
+function getWeatherWindMultiplier() {
+  if (!state.weather.type) return 1;
+  return weatherTypes[state.weather.type].windMultiplier * state.weather.intensity;
+}
+
+// ============================================
+// END WEATHER SYSTEM
+// ============================================
+
 // Happy Wheels style cowboy colors
 const cowboyColors = {
   skin: '#E8B89D',
@@ -549,6 +1165,18 @@ const state = {
   bullet: null, // Active bullet {x, y, vx, vy, target}
   blood: [], // Blood particles [{x, y, vx, vy, size, life}]
   gibs: [], // Flesh chunks [{x, y, vx, vy, rot, vrot, size, shape, color, life}]
+  skyTransition: {
+    active: false,
+    fromIndex: 0,
+    toIndex: 0,
+    startTime: 0,
+    duration: 1500, // 1.5 second transition
+  },
+  weather: {
+    type: null, // null, 'dust_storm', 'rain', 'wind'
+    intensity: 0, // 0-1
+    particles: [], // Weather-specific particles
+  },
 };
 
 // Spring physics for Happy Wheels style wobbly arms
@@ -1120,40 +1748,80 @@ function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, wo
   // Initialize the skeleton
   initRagdollSkeleton(baseX, groundY);
 
-  // Impact force from bullet direction
+  // Randomize hit location for varied death animations
   const hitDir = bulletVx > 0 ? 1 : -1;
-  const impactForce = 15 + Math.random() * 10;
-  const upForce = -10 - Math.random() * 8;
+  const force = 8 + Math.random() * 6;
+  const p = ragdoll.points;
 
-  // Apply velocity to all points
-  for (const name in ragdoll.points) {
-    const p = ragdoll.points[name];
-    p.oldX = p.x - hitDir * impactForce * (0.6 + Math.random() * 0.4);
-    p.oldY = p.y - upForce * (0.6 + Math.random() * 0.4);
+  // Pick random hit zone: 0=head, 1=chest, 2=gut, 3=shoulder
+  const hitZone = Math.floor(Math.random() * 4);
+
+  if (hitZone === 0) {
+    // HEAD SHOT - head snaps back violently, body follows
+    p.head.oldX = p.head.x - hitDir * force * 2.5;
+    p.head.oldY = p.head.y - force * 0.8; // Head jerks up and back
+    p.neck.oldX = p.neck.x - hitDir * force * 1.5;
+    p.chest.oldX = p.chest.x - hitDir * force * 0.8;
+    // Arms fly up
+    p.handF.oldX = p.handF.x + (Math.random() * 12 - 6);
+    p.handF.oldY = p.handF.y - force * 1.2;
+    p.handB.oldX = p.handB.x + (Math.random() * 12 - 6);
+    p.handB.oldY = p.handB.y - force * 0.8;
+  } else if (hitZone === 1) {
+    // CHEST SHOT - classic knockback, upper body takes it
+    p.chest.oldX = p.chest.x - hitDir * force * 1.8;
+    p.chest.oldY = p.chest.y - force * 0.3;
+    p.neck.oldX = p.neck.x - hitDir * force * 1.5;
+    p.head.oldX = p.head.x - hitDir * force * 1.2;
+    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 1.6;
+    p.shoulderB.oldX = p.shoulderB.x - hitDir * force * 1.6;
+    // Arms flail back
+    p.handF.oldX = p.handF.x - hitDir * force * 0.8;
+    p.handB.oldX = p.handB.x - hitDir * force * 0.5;
+  } else if (hitZone === 2) {
+    // GUT SHOT - doubles over, then collapses
+    p.hip.oldX = p.hip.x - hitDir * force * 1.2;
+    p.hip.oldY = p.hip.y + force * 0.5; // Hip drops
+    p.chest.oldX = p.chest.x - hitDir * force * 0.4;
+    p.chest.oldY = p.chest.y + force * 0.8; // Chest folds forward
+    p.head.oldX = p.head.x - hitDir * force * 0.2;
+    p.head.oldY = p.head.y + force * 1.2; // Head drops down
+    // Arms clutch toward gut
+    p.handF.oldY = p.handF.y + force * 0.6;
+    p.handB.oldY = p.handB.y + force * 0.6;
+    // Knees buckle
+    p.kneeL.oldX = p.kneeL.x + hitDir * force * 0.4;
+    p.kneeR.oldX = p.kneeR.x + hitDir * force * 0.4;
+  } else {
+    // SHOULDER SHOT - spins them around
+    const spinDir = Math.random() > 0.5 ? 1 : -1;
+    p.shoulderF.oldX = p.shoulderF.x - hitDir * force * 2.0;
+    p.shoulderF.oldY = p.shoulderF.y - force * 0.4;
+    p.shoulderB.oldX = p.shoulderB.x + hitDir * force * 0.8; // Opposite shoulder goes other way
+    p.chest.oldX = p.chest.x - hitDir * force * 1.0;
+    p.head.oldX = p.head.x - hitDir * force * 0.8;
+    // Hit arm flies back
+    p.elbowF.oldX = p.elbowF.x - hitDir * force * 2.5;
+    p.handF.oldX = p.handF.x - hitDir * force * 3.0;
+    p.handF.oldY = p.handF.y - force * 0.8;
+    // Creates a spin/twist
+    p.hipL.oldX = p.hipL.x + hitDir * force * 0.3;
+    p.hipR.oldX = p.hipR.x - hitDir * force * 0.3;
   }
 
-  // Extra kick to extremities - they fling dramatically
-  const p = ragdoll.points;
-  const fling = impactForce * 0.8;
+  // All zones: arms get some random flail
+  p.elbowF.oldX += (Math.random() * 8 - 4);
+  p.elbowB.oldX += (Math.random() * 8 - 4);
+  p.handF.oldX += (Math.random() * 6 - 3);
+  p.handB.oldX += (Math.random() * 6 - 3);
 
-  // Head whips back
-  p.head.oldX -= hitDir * fling * 1.2;
-  p.head.oldY -= 5;
-
-  // Gun hand flies with gun
-  p.handF.oldX -= hitDir * fling * 2;
-  p.handF.oldY -= 8;
-  p.elbowF.oldX -= hitDir * fling * 1.5;
-
-  // Back hand flails
-  p.handB.oldX -= hitDir * fling * 1.3;
-  p.handB.oldY -= 4;
-
-  // Feet kick
-  p.footL.oldX -= hitDir * fling * 0.5;
-  p.footL.oldY -= 3;
-  p.footR.oldX -= hitDir * fling * 0.5;
-  p.footR.oldY -= 3;
+  // Feet stay mostly planted for stumble effect (except gut shot)
+  if (hitZone !== 2) {
+    p.footL.oldX = p.footL.x;
+    p.footL.oldY = p.footL.y;
+    p.footR.oldX = p.footR.x;
+    p.footR.oldY = p.footR.y;
+  }
 }
 
 // Draw ragdolled cowboy - hierarchical: torso is root, limbs attach to it
@@ -1390,7 +2058,7 @@ function getAITypeInterval() {
 function drawBackground() {
   const w = canvas.width;
   const h = canvas.height;
-  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  const palette = getInterpolatedPalette();
 
   // Layer 1: Sky gradient
   const skyGradient = ctx.createLinearGradient(0, 0, 0, h);
@@ -1400,9 +2068,9 @@ function drawBackground() {
   ctx.fillStyle = skyGradient;
   ctx.fillRect(0, 0, w, h);
 
-  // Layer 2: Stars (night only)
-  if (palette.isNight) {
-    drawStars();
+  // Layer 2: Stars (fade in/out during day/night transitions)
+  if (palette.starOpacity > 0) {
+    drawStars(palette.starOpacity);
   }
 
   // Layer 3: Sun or Moon
@@ -1428,16 +2096,17 @@ function drawBackground() {
 }
 
 // Draw twinkling stars for night sky
-function drawStars() {
-  const time = Date.now() * 0.001;  // Convert to seconds
+function drawStars(starOpacity = 1) {
+  const speedMult = getTransitionSpeedMultiplier();
+  const time = Date.now() * 0.001 * speedMult;  // Convert to seconds, speed up during transition
 
   for (const star of stars) {
     const x = star.x * canvas.width;
     const y = star.y * canvas.height;
 
-    // Twinkle effect
+    // Twinkle effect (faster during transition)
     const twinkle = 0.5 + Math.sin(time * star.twinkleSpeed * 10 + star.twinkleOffset) * 0.5;
-    const opacity = 0.4 + twinkle * 0.6;
+    const opacity = (0.4 + twinkle * 0.6) * starOpacity;
 
     ctx.globalAlpha = opacity;
     ctx.fillStyle = '#FFFFFF';
@@ -1448,30 +2117,34 @@ function drawStars() {
   ctx.globalAlpha = 1;
 }
 
-// Draw sun or moon based on palette
-function drawCelestialBody(palette) {
-  const centerX = canvas.width * 0.5;
-  const centerY = canvas.height * palette.sunY;
-  const bodyRadius = scale(palette.isNight ? 25 : 30);
+// Draw a single celestial body (sun or moon)
+function drawSingleCelestialBody(centerX, centerY, color, glowColor, isNight, opacity) {
+  if (opacity <= 0) return;
+
+  const bodyRadius = scale(isNight ? 25 : 30);
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
 
   // Outer glow
   const glowRadius = bodyRadius * 3;
   const glowGradient = ctx.createRadialGradient(centerX, centerY, bodyRadius * 0.5, centerX, centerY, glowRadius);
-  glowGradient.addColorStop(0, palette.sunGlow + '60');  // Semi-transparent
-  glowGradient.addColorStop(0.5, palette.sunGlow + '20');
-  glowGradient.addColorStop(1, palette.sunGlow + '00');  // Fully transparent
+  glowGradient.addColorStop(0, glowColor + '60');  // Semi-transparent
+  glowGradient.addColorStop(0.5, glowColor + '20');
+  glowGradient.addColorStop(1, glowColor + '00');  // Fully transparent
   ctx.fillStyle = glowGradient;
   ctx.fillRect(centerX - glowRadius, centerY - glowRadius, glowRadius * 2, glowRadius * 2);
 
   // Main body
-  ctx.fillStyle = palette.sun;
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(centerX, centerY, bodyRadius, 0, Math.PI * 2);
   ctx.fill();
 
   // Moon craters (subtle, only at night)
-  if (palette.isNight) {
-    ctx.globalAlpha = 0.15;
+  if (isNight) {
+    ctx.globalAlpha = 0.15 * opacity;
     ctx.fillStyle = '#888888';
     ctx.beginPath();
     ctx.arc(centerX - bodyRadius * 0.3, centerY - bodyRadius * 0.2, bodyRadius * 0.15, 0, Math.PI * 2);
@@ -1482,7 +2155,30 @@ function drawCelestialBody(palette) {
     ctx.beginPath();
     ctx.arc(centerX + bodyRadius * 0.35, centerY - bodyRadius * 0.1, bodyRadius * 0.08, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+// Draw sun or moon based on palette
+function drawCelestialBody(palette) {
+  const centerX = canvas.width * 0.5;
+
+  // During day/night transition, draw both outgoing and incoming bodies
+  if (palette.transitioning && palette.crossingDayNight) {
+    // Draw outgoing body (sinking below horizon)
+    const outgoing = palette.outgoingBody;
+    const outgoingY = canvas.height * outgoing.y;
+    drawSingleCelestialBody(centerX, outgoingY, outgoing.color, outgoing.glow, outgoing.isNight, outgoing.opacity);
+
+    // Draw incoming body (descending from above)
+    const incoming = palette.incomingBody;
+    const incomingY = canvas.height * incoming.y;
+    drawSingleCelestialBody(centerX, incomingY, incoming.color, incoming.glow, incoming.isNight, incoming.opacity);
+  } else {
+    // Normal case: single celestial body
+    const centerY = canvas.height * palette.sunY;
+    drawSingleCelestialBody(centerX, centerY, palette.sun, palette.sunGlow, palette.isNight, 1);
   }
 }
 
@@ -1847,23 +2543,24 @@ function draw() {
 
   drawBackground();
   drawAtmosphere();
+  drawWeather(); // Weather particles behind characters
 
   // Cowboys positioned relative to canvas (25% and 75% width, 80% height)
   const playerX = canvas.width * PLAYER_X;
   const enemyX = canvas.width * ENEMY_X;
   const cowboyY = canvas.height * GROUND_LEVEL;
 
-  // Draw cowboys - use ragdoll for the loser
+  // Draw cowboys - use ragdoll for the loser, sprite-based for active
   if (ragdoll.active && ragdoll.isPlayer) {
     drawRagdoll(playerX, cowboyY, true);
   } else {
-    drawCowboy(playerX, cowboyY, true, state.playerArmDisplay, true);
+    drawSpriteCowboy(playerX, cowboyY, true, state.playerArmDisplay, true);
   }
 
   if (ragdoll.active && !ragdoll.isPlayer) {
     drawRagdoll(enemyX, cowboyY, false);
   } else {
-    drawCowboy(enemyX, cowboyY, false, state.aiArmDisplay, false);
+    drawSpriteCowboy(enemyX, cowboyY, false, state.aiArmDisplay, false);
   }
 
   // Muzzle flash (positioned at gun height)
@@ -1893,10 +2590,9 @@ function draw() {
     ctx.fillText('Type the sentence when you see DRAW!', centerX, bottomY);
 
   } else if (state.phase === 'countdown') {
-    // Center countdown on the sun/moon
-    const palette = skyPalettes[state.currentBg % skyPalettes.length];
-    const sunY = canvas.height * palette.sunY;
-    drawOutlinedText(state.countdownValue.toString(), centerX, sunY, 80, '#FFF');
+    // Static centered countdown position
+    const countdownY = canvas.height * 0.25;
+    drawOutlinedText(state.countdownValue.toString(), centerX, countdownY, 80, '#FFF');
 
   } else if (state.phase === 'playing') {
     if (state.currentWord) {
@@ -1923,6 +2619,9 @@ function draw() {
       ctx.fillText('Press Space or Enter to continue', centerX, bottomY);
     }
   }
+
+  // Weather overlay (tint/haze)
+  drawWeatherOverlay();
 
   // Version number in bottom-left corner
   ctx.font = `${scale(12)}px "Courier New", monospace`;
@@ -1990,8 +2689,14 @@ function startCountdown() {
   // Reset ragdoll
   resetRagdoll();
 
-  // Cycle to next background
-  state.currentBg = (state.currentBg + 1) % skyPalettes.length;
+  // Start sky transition to next background
+  state.skyTransition.active = true;
+  state.skyTransition.fromIndex = state.currentBg;
+  state.skyTransition.toIndex = (state.currentBg + 1) % skyPalettes.length;
+  state.skyTransition.startTime = Date.now();
+
+  // Initialize random weather
+  initWeather();
 
   hiddenInput.value = '';
   hiddenInput.focus();
@@ -2167,6 +2872,8 @@ function gameLoop() {
   updateBlood();
   updateGibs();
   updateRagdoll();
+  updateSkyTransition();
+  updateWeather();
   updateAtmosphere();
   draw();
   requestAnimationFrame(gameLoop);
@@ -2194,6 +2901,12 @@ hiddenInput.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Toggle debug joint visualization with D key
+  if (e.key === 'd' || e.key === 'D') {
+    window.DEBUG_JOINTS = !window.DEBUG_JOINTS;
+    console.log('Debug joints:', window.DEBUG_JOINTS ? 'ON' : 'OFF');
+  }
+
   if (state.phase === 'playing') {
     hiddenInput.focus();
   }
