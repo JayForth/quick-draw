@@ -1,5 +1,5 @@
 // Quick Draw - Typing Showdown Game
-const VERSION = '1.2.0'; // Loose ragdoll with inertia
+const VERSION = '2.0.0'; // Verlet ragdoll physics
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -35,13 +35,26 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
-// Background image
-const backgroundImage = new Image();
-backgroundImage.src = '/background.jpg';
-let backgroundLoaded = false;
-backgroundImage.onload = () => {
-  backgroundLoaded = true;
+// Foreground image (saloon/buildings - has transparent sky area)
+const foregroundImage = new Image();
+foregroundImage.src = '/foreground.png';
+let foregroundLoaded = false;
+foregroundImage.onload = () => {
+  foregroundLoaded = true;
 };
+
+// Stars for night sky (generated once)
+const stars = [];
+const STAR_COUNT = 80;
+for (let i = 0; i < STAR_COUNT; i++) {
+  stars.push({
+    x: Math.random(),  // Percentage of canvas width
+    y: Math.random() * 0.5,  // Upper 50% of canvas
+    size: 0.5 + Math.random() * 1.5,
+    twinkleOffset: Math.random() * Math.PI * 2,
+    twinkleSpeed: 0.02 + Math.random() * 0.03,
+  });
+}
 
 // ============================================
 // ATMOSPHERIC EFFECTS
@@ -85,9 +98,13 @@ function updateDust() {
 }
 
 function drawDust() {
+  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  // Warmer dust during day, cooler at night
+  const dustColor = palette.isNight ? '#8090A0' : '#d4a76a';
+
   for (const p of dustParticles) {
-    ctx.globalAlpha = p.opacity;
-    ctx.fillStyle = '#d4a76a';
+    ctx.globalAlpha = p.opacity * (palette.isNight ? 0.6 : 1);  // Dimmer at night
+    ctx.fillStyle = dustColor;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
@@ -141,14 +158,18 @@ function updateTumbleweeds() {
 }
 
 function drawTumbleweeds() {
+  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+  // Darker tumbleweed color at night
+  const tumbleweedColor = palette.isNight ? '#5A4535' : '#8B7355';
+
   for (const t of tumbleweeds) {
     ctx.save();
     ctx.translate(t.x, t.y);
     ctx.rotate(t.rotation);
-    ctx.globalAlpha = t.opacity;
+    ctx.globalAlpha = t.opacity * (palette.isNight ? 0.7 : 1);
 
     // Draw tumbleweed as a messy circle of lines
-    ctx.strokeStyle = '#8B7355';
+    ctx.strokeStyle = tumbleweedColor;
     ctx.lineWidth = 2;
     for (let i = 0; i < 12; i++) {
       const angle = (i / 12) * Math.PI * 2;
@@ -176,44 +197,52 @@ function drawTumbleweeds() {
   ctx.globalAlpha = 1;
 }
 
-// Sun glint effect
+// Sun/moon glint effect
 let glintPhase = 0;
 const glintSpeed = 0.02;
 
 function drawSunGlint() {
   glintPhase += glintSpeed;
 
-  // Sun position (roughly center-top of the background image)
+  const palette = skyPalettes[state.currentBg % skyPalettes.length];
   const sunX = canvas.width * 0.5;
-  const sunY = canvas.height * 0.22;
+  const sunY = canvas.height * palette.sunY;
 
-  // Pulsing glow
+  // Pulsing glow - reduced at night
   const pulseSize = 1 + Math.sin(glintPhase) * 0.15;
-  const glowRadius = canvas.height * 0.15 * pulseSize;
+  const baseGlowSize = palette.isNight ? 0.08 : 0.15;
+  const glowRadius = canvas.height * baseGlowSize * pulseSize;
+
+  // Convert hex colors to rgba for gradient
+  const glowColor = palette.sunGlow;
+  const glowOpacity = palette.isNight ? 0.15 : 0.3;
 
   // Outer glow
   const gradient = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, glowRadius);
-  gradient.addColorStop(0, 'rgba(255, 250, 220, 0.3)');
-  gradient.addColorStop(0.5, 'rgba(255, 240, 200, 0.1)');
-  gradient.addColorStop(1, 'rgba(255, 230, 180, 0)');
+  gradient.addColorStop(0, glowColor + Math.round(glowOpacity * 255).toString(16).padStart(2, '0'));
+  gradient.addColorStop(0.5, glowColor + Math.round(glowOpacity * 0.33 * 255).toString(16).padStart(2, '0'));
+  gradient.addColorStop(1, glowColor + '00');
   ctx.fillStyle = gradient;
   ctx.fillRect(sunX - glowRadius, sunY - glowRadius, glowRadius * 2, glowRadius * 2);
 
-  // Lens flare streaks (subtle)
-  ctx.globalAlpha = 0.15 + Math.sin(glintPhase * 1.5) * 0.1;
-  ctx.strokeStyle = 'rgba(255, 250, 230, 0.5)';
-  ctx.lineWidth = 2;
+  // Lens flare streaks - only during day, stronger at sunset
+  if (!palette.isNight) {
+    const flareIntensity = (palette.sunY > 0.35) ? 0.2 : 0.12;  // Stronger at sunset
+    ctx.globalAlpha = flareIntensity + Math.sin(glintPhase * 1.5) * 0.08;
+    ctx.strokeStyle = palette.sun + '80';
+    ctx.lineWidth = 2;
 
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2 + glintPhase * 0.1;
-    const len = canvas.height * (0.08 + Math.sin(glintPhase + i) * 0.02);
-    ctx.beginPath();
-    ctx.moveTo(sunX, sunY);
-    ctx.lineTo(sunX + Math.cos(angle) * len, sunY + Math.sin(angle) * len);
-    ctx.stroke();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 + glintPhase * 0.1;
+      const len = canvas.height * (0.06 + Math.sin(glintPhase + i) * 0.015);
+      ctx.beginPath();
+      ctx.moveTo(sunX, sunY);
+      ctx.lineTo(sunX + Math.cos(angle) * len, sunY + Math.sin(angle) * len);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
   }
-
-  ctx.globalAlpha = 1;
 }
 
 // Floating dust motes (larger, slower, more visible)
@@ -267,15 +296,25 @@ function updateDustMotes() {
 }
 
 function drawDustMotes() {
+  const palette = skyPalettes[state.currentBg % skyPalettes.length];
+
   for (const m of dustMotes) {
     if (m.opacity <= 0) continue;
-    ctx.globalAlpha = m.opacity;
+    ctx.globalAlpha = m.opacity * (palette.isNight ? 0.5 : 1);  // Dimmer at night
 
-    // Glowing dust mote
+    // Glowing dust mote - color matches sun/moon
     const gradient = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.size * 2);
-    gradient.addColorStop(0, 'rgba(255, 245, 220, 0.8)');
-    gradient.addColorStop(0.5, 'rgba(255, 240, 200, 0.3)');
-    gradient.addColorStop(1, 'rgba(255, 235, 180, 0)');
+    if (palette.isNight) {
+      // Cool moonlit motes
+      gradient.addColorStop(0, 'rgba(200, 210, 230, 0.6)');
+      gradient.addColorStop(0.5, 'rgba(180, 190, 210, 0.2)');
+      gradient.addColorStop(1, 'rgba(160, 170, 190, 0)');
+    } else {
+      // Warm sunlit motes
+      gradient.addColorStop(0, 'rgba(255, 245, 220, 0.8)');
+      gradient.addColorStop(0.5, 'rgba(255, 240, 200, 0.3)');
+      gradient.addColorStop(1, 'rgba(255, 235, 180, 0)');
+    }
     ctx.fillStyle = gradient;
     ctx.fillRect(m.x - m.size * 2, m.y - m.size * 2, m.size * 4, m.size * 4);
   }
@@ -308,23 +347,23 @@ function drawAtmosphere() {
 // END ATMOSPHERIC EFFECTS
 // ============================================
 
-// Day/night cycle palettes (10 stages) - kept for countdown positioning
+// Day/night cycle palettes (10 stages) with tinting for foreground
 // Day: Sun descends from top over 5 rounds
 // Night: Moon descends from top over 5 rounds
 const skyPalettes = [
   // DAY CYCLE - Sun descends (rounds 1-5)
-  { top: '#5BA3D9', mid: '#87CEEB', bottom: '#E8DCC4', sun: '#FFFDE7', sunGlow: '#FFF8E1', sunY: 0.15, isNight: false },    // 0: High noon - sun at top
-  { top: '#6B9BC3', mid: '#9DC4D9', bottom: '#E8D4B8', sun: '#FFF8E1', sunGlow: '#FFECB3', sunY: 0.22, isNight: false },    // 1: Early afternoon
-  { top: '#7A9DBF', mid: '#C4A77D', bottom: '#E8C4A0', sun: '#FFE082', sunGlow: '#FFCC80', sunY: 0.30, isNight: false },    // 2: Afternoon
-  { top: '#8B6B61', mid: '#D4956B', bottom: '#E8A870', sun: '#FFB74D', sunGlow: '#FFA726', sunY: 0.40, isNight: false },    // 3: Golden hour
-  { top: '#4A2C4A', mid: '#C75B5B', bottom: '#F4A259', sun: '#FF8A65', sunGlow: '#FF7043', sunY: 0.52, isNight: false },    // 4: Sunset - sun at horizon
+  { top: '#5BA3D9', mid: '#87CEEB', bottom: '#E8DCC4', sun: '#FFFDE7', sunGlow: '#FFF8E1', sunY: 0.15, isNight: false, tint: '#FFE4B5', tintOpacity: 0.08 },    // 0: High noon
+  { top: '#6B9BC3', mid: '#9DC4D9', bottom: '#E8D4B8', sun: '#FFF8E1', sunGlow: '#FFECB3', sunY: 0.22, isNight: false, tint: '#FFFACD', tintOpacity: 0.05 },    // 1: Early afternoon
+  { top: '#7A9DBF', mid: '#C4A77D', bottom: '#E8C4A0', sun: '#FFE082', sunGlow: '#FFCC80', sunY: 0.30, isNight: false, tint: null, tintOpacity: 0 },            // 2: Afternoon (no tint)
+  { top: '#8B6B61', mid: '#D4956B', bottom: '#E8A870', sun: '#FFB74D', sunGlow: '#FFA726', sunY: 0.40, isNight: false, tint: '#FFD700', tintOpacity: 0.06 },    // 3: Golden hour
+  { top: '#4A2C4A', mid: '#C75B5B', bottom: '#F4A259', sun: '#FF8A65', sunGlow: '#FF7043', sunY: 0.52, isNight: false, tint: '#FF6347', tintOpacity: 0.12 },    // 4: Sunset
 
   // NIGHT CYCLE - Moon descends (rounds 6-10)
-  { top: '#1A1A2E', mid: '#2D2D44', bottom: '#4A3A5E', sun: '#E8E8E8', sunGlow: '#B0B0B0', sunY: 0.12, isNight: true },     // 5: Early night - moon at top
-  { top: '#151525', mid: '#252538', bottom: '#3A3A52', sun: '#E0E0E0', sunGlow: '#A0A0A0', sunY: 0.20, isNight: true },     // 6: Night
-  { top: '#101020', mid: '#1E1E30', bottom: '#2E2E45', sun: '#D8D8D8', sunGlow: '#909090', sunY: 0.28, isNight: true },     // 7: Deep night
-  { top: '#0D0D1A', mid: '#1A1A2E', bottom: '#2A2A40', sun: '#D0D0D0', sunGlow: '#888888', sunY: 0.36, isNight: true },     // 8: Late night
-  { top: '#151525', mid: '#2A2A40', bottom: '#3D3D55', sun: '#C8C8C8', sunGlow: '#808080', sunY: 0.45, isNight: true },     // 9: Pre-dawn - moon low
+  { top: '#1A1A2E', mid: '#2D2D44', bottom: '#4A3A5E', sun: '#E8E8E8', sunGlow: '#B0B0B0', sunY: 0.12, isNight: true, tint: '#4169E1', tintOpacity: 0.15 },     // 5: Early night
+  { top: '#151525', mid: '#252538', bottom: '#3A3A52', sun: '#E0E0E0', sunGlow: '#A0A0A0', sunY: 0.20, isNight: true, tint: '#191970', tintOpacity: 0.18 },     // 6: Night
+  { top: '#101020', mid: '#1E1E30', bottom: '#2E2E45', sun: '#D8D8D8', sunGlow: '#909090', sunY: 0.28, isNight: true, tint: '#2E1A47', tintOpacity: 0.20 },     // 7: Deep night
+  { top: '#0D0D1A', mid: '#1A1A2E', bottom: '#2A2A40', sun: '#D0D0D0', sunGlow: '#888888', sunY: 0.36, isNight: true, tint: '#1A1A3E', tintOpacity: 0.18 },     // 8: Late night
+  { top: '#151525', mid: '#2A2A40', bottom: '#3D3D55', sun: '#C8C8C8', sunGlow: '#808080', sunY: 0.45, isNight: true, tint: '#2A1A4A', tintOpacity: 0.15 },     // 9: Pre-dawn
 ];
 
 // Happy Wheels style cowboy colors
@@ -429,171 +468,243 @@ function setAiArmTarget(target) {
   physics.ai.target = target;
 }
 
-// Ragdoll physics for death animation
-// Rockstar-style loose ragdoll - limbs have inertia and swing freely
+// ============================================
+// VERLET RAGDOLL PHYSICS
+// ============================================
+// Each body part is a point with position. Velocity is implicit (pos - oldPos).
+// Points are connected by distance constraints (sticks).
+// Constraints directly move positions to maintain distances.
+
 const ragdoll = {
   active: false,
   isPlayer: false,
-  startTime: 0,
   baseX: 0,
   baseY: 0,
-
-  // Torso is the ROOT with world position/velocity
-  torso: {
-    x: 0, y: 0,
-    vx: 0, vy: 0,
-    prevVx: 0, prevVy: 0,  // Previous velocity for acceleration calc
-    rot: 0, vrot: 0,
-  },
-
-  // Limbs swing freely - each has rotation, velocity, and physical properties
-  head: { rot: 0, vrot: 0, damping: 0.96, gravity: 0.08, length: 25 },
-  armGun: { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 },
-  armBack: { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 },
-  legL: { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 },
-  legR: { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 },
-
-  gravity: 0.5,
   groundY: 0,
-  friction: 0.6,
   wound: null,
-  hitGround: false,
+
+  // All the points in the ragdoll skeleton
+  points: {},
+
+  // Distance constraints between points
+  sticks: [],
+
+  // Physics settings
+  gravity: 0.4,
+  friction: 0.98,      // Air friction
+  groundFriction: 0.7, // Ground friction
+  bounce: 0.3,         // Ground bounce
+  iterations: 5,       // Constraint solver iterations per frame
+};
+
+// Create a Verlet point
+function createPoint(x, y, pinned = false) {
+  return {
+    x: x,
+    y: y,
+    oldX: x,
+    oldY: y,
+    pinned: pinned, // Pinned points don't move
+  };
+}
+
+// Create a distance constraint (stick) between two points
+function createStick(pointA, pointB, length = null) {
+  const dx = pointB.x - pointA.x;
+  const dy = pointB.y - pointA.y;
+  return {
+    pointA: pointA,
+    pointB: pointB,
+    length: length !== null ? length : Math.sqrt(dx * dx + dy * dy),
+  };
+}
+
+// Initialize ragdoll skeleton at a position
+function initRagdollSkeleton(baseX, baseY) {
+  const s = scale(1);
+  const p = ragdoll.points;
+
+  // Create points for the skeleton (positions relative to standing pose)
+  // Head and spine
+  p.head = createPoint(baseX, baseY - s * 95);
+  p.neck = createPoint(baseX, baseY - s * 75);
+  p.chest = createPoint(baseX, baseY - s * 55);
+  p.hip = createPoint(baseX, baseY - s * 25);
+
+  // Arms (front = gun arm when facing right)
+  p.shoulderF = createPoint(baseX + s * 12, baseY - s * 60);
+  p.elbowF = createPoint(baseX + s * 25, baseY - s * 45);
+  p.handF = createPoint(baseX + s * 40, baseY - s * 35);
+
+  p.shoulderB = createPoint(baseX - s * 12, baseY - s * 60);
+  p.elbowB = createPoint(baseX - s * 20, baseY - s * 45);
+  p.handB = createPoint(baseX - s * 25, baseY - s * 35);
+
+  // Legs
+  p.hipL = createPoint(baseX - s * 8, baseY - s * 22);
+  p.kneeL = createPoint(baseX - s * 10, baseY - s * 12);
+  p.footL = createPoint(baseX - s * 12, baseY);
+
+  p.hipR = createPoint(baseX + s * 8, baseY - s * 22);
+  p.kneeR = createPoint(baseX + s * 10, baseY - s * 12);
+  p.footR = createPoint(baseX + s * 12, baseY);
+
+  // Create sticks (constraints)
+  ragdoll.sticks = [
+    // Spine
+    createStick(p.head, p.neck),
+    createStick(p.neck, p.chest),
+    createStick(p.chest, p.hip),
+
+    // Shoulders to chest
+    createStick(p.chest, p.shoulderF),
+    createStick(p.chest, p.shoulderB),
+
+    // Front arm
+    createStick(p.shoulderF, p.elbowF),
+    createStick(p.elbowF, p.handF),
+
+    // Back arm
+    createStick(p.shoulderB, p.elbowB),
+    createStick(p.elbowB, p.handB),
+
+    // Hips
+    createStick(p.hip, p.hipL),
+    createStick(p.hip, p.hipR),
+    createStick(p.hipL, p.hipR), // Keep hips together
+
+    // Left leg
+    createStick(p.hipL, p.kneeL),
+    createStick(p.kneeL, p.footL),
+
+    // Right leg
+    createStick(p.hipR, p.kneeR),
+    createStick(p.kneeR, p.footR),
+
+    // Structural stability - cross braces
+    createStick(p.head, p.chest),      // Head to chest
+    createStick(p.neck, p.shoulderF),  // Neck to shoulders
+    createStick(p.neck, p.shoulderB),
+    createStick(p.chest, p.hipL),      // Chest to hips (torso rigidity)
+    createStick(p.chest, p.hipR),
+    createStick(p.shoulderF, p.hip),   // Shoulder cross braces
+    createStick(p.shoulderB, p.hip),
+  ];
 }
 
 function startRagdoll(isPlayer, baseX, groundY) {
   ragdoll.active = true;
   ragdoll.isPlayer = isPlayer;
-  ragdoll.startTime = Date.now();
   ragdoll.groundY = groundY;
   ragdoll.baseX = baseX;
   ragdoll.baseY = groundY;
-  ragdoll.hitGround = false;
 
+  // Initialize the skeleton
+  initRagdollSkeleton(baseX, groundY);
+
+  // Apply impact force
   const hitDir = isPlayer ? -1 : 1;
-  const impactForce = 8 + Math.random() * 5;
-  const upForce = -6 - Math.random() * 4;
+  const impactForce = 12 + Math.random() * 8;
+  const upForce = -8 - Math.random() * 6;
 
-  // Torso gets strong initial impact
-  ragdoll.torso = {
-    x: 0,
-    y: -scale(50),
-    vx: hitDir * impactForce,
-    vy: upForce,
-    prevVx: 0,
-    prevVy: 0,
-    rot: hitDir * 0.1,
-    vrot: hitDir * (0.12 + Math.random() * 0.1),
-  };
+  // Apply velocity to all points (set oldX/oldY to simulate initial velocity)
+  for (const name in ragdoll.points) {
+    const p = ragdoll.points[name];
+    // Velocity is implicit: velocity = pos - oldPos
+    // So to add velocity, we move oldPos backwards
+    p.oldX = p.x - hitDir * impactForce * (0.8 + Math.random() * 0.4);
+    p.oldY = p.y - upForce * (0.8 + Math.random() * 0.4);
+  }
 
-  // Limbs start with momentum opposing the hit direction (inertia)
-  // Arms flail more, legs trail behind
-  ragdoll.head = { rot: -hitDir * 0.3, vrot: -hitDir * (0.2 + Math.random() * 0.15), damping: 0.96, gravity: 0.08, length: 25 };
-  ragdoll.armGun = { rot: -hitDir * 0.5, vrot: -hitDir * (0.4 + Math.random() * 0.3), damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.armBack = { rot: -hitDir * 0.4, vrot: -hitDir * (0.35 + Math.random() * 0.25), damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.legL = { rot: -hitDir * 0.2, vrot: -hitDir * (0.15 + Math.random() * 0.1), damping: 0.94, gravity: 0.15, length: 45 };
-  ragdoll.legR = { rot: -hitDir * 0.15, vrot: -hitDir * (0.12 + Math.random() * 0.1), damping: 0.94, gravity: 0.15, length: 45 };
+  // Extra kick to extremities (head, hands, feet fling more)
+  const p = ragdoll.points;
+  const fling = impactForce * 0.5;
+  p.head.oldX -= hitDir * fling;
+  p.head.oldY -= 3;
+  p.handF.oldX -= hitDir * fling * 1.5;
+  p.handF.oldY -= 5;
+  p.handB.oldX -= hitDir * fling;
+  p.footL.oldX -= hitDir * fling * 0.3;
+  p.footR.oldX -= hitDir * fling * 0.3;
 }
 
 function updateRagdoll() {
   if (!ragdoll.active) return;
 
-  const s = scale(1);
-  const t = ragdoll.torso;
+  const groundY = ragdoll.groundY;
 
-  // Store previous velocity for acceleration calculation
-  const prevVx = t.vx;
-  const prevVy = t.vy;
+  // === VERLET INTEGRATION ===
+  // For each point: apply gravity, then move based on velocity (implicit from position delta)
+  for (const name in ragdoll.points) {
+    const p = ragdoll.points[name];
+    if (p.pinned) continue;
 
-  // Apply gravity to torso
-  t.vy += ragdoll.gravity;
+    // Calculate velocity (implicit)
+    const vx = (p.x - p.oldX) * ragdoll.friction;
+    const vy = (p.y - p.oldY) * ragdoll.friction;
 
-  // Apply velocity to torso
-  t.x += t.vx;
-  t.y += t.vy;
-  t.rot += t.vrot;
+    // Store current position
+    p.oldX = p.x;
+    p.oldY = p.y;
 
-  // Calculate acceleration (change in velocity)
-  const accelX = t.vx - prevVx;
-  const accelY = t.vy - prevVy;
+    // Apply velocity and gravity
+    p.x += vx;
+    p.y += vy + ragdoll.gravity;
 
-  // Ground collision for torso
-  const torsoBottom = t.y + s * 30;
-  if (torsoBottom > 0) {
-    t.y = -s * 30;
-
-    // First impact - dramatic limb flop
-    if (!ragdoll.hitGround) {
-      ragdoll.hitGround = true;
-      // Limbs flop hard on impact
-      const impactStrength = Math.abs(t.vy) * 0.15;
-      ragdoll.head.vrot += (Math.random() - 0.5) * impactStrength * 2;
-      ragdoll.armGun.vrot += (Math.random() - 0.5) * impactStrength * 3;
-      ragdoll.armBack.vrot += (Math.random() - 0.5) * impactStrength * 3;
-      ragdoll.legL.vrot += (Math.random() - 0.5) * impactStrength * 2;
-      ragdoll.legR.vrot += (Math.random() - 0.5) * impactStrength * 2;
-    }
-
-    t.vy *= -0.25; // Bounce
-    t.vx *= ragdoll.friction;
-    t.vrot *= 0.6;
-
-    // Stop tiny bounces
-    if (Math.abs(t.vy) < 0.8) {
-      t.vy = 0;
+    // Ground collision
+    if (p.y > groundY) {
+      p.y = groundY;
+      p.oldY = p.y + vy * ragdoll.bounce; // Bounce
+      p.oldX = p.x - vx * ragdoll.groundFriction; // Ground friction
     }
   }
 
-  // Air friction
-  t.vx *= 0.98;
-  t.vrot *= 0.97;
+  // === CONSTRAINT SOLVING ===
+  // Multiple iterations for stability
+  for (let iter = 0; iter < ragdoll.iterations; iter++) {
+    for (const stick of ragdoll.sticks) {
+      const a = stick.pointA;
+      const b = stick.pointB;
 
-  // Update each limb with pendulum physics
-  const limbNames = ['head', 'armGun', 'armBack', 'legL', 'legR'];
-  for (const limbName of limbNames) {
-    const limb = ragdoll[limbName];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // Inertia effect: limbs resist changes in motion
-    // When torso accelerates, limbs swing in opposite direction
-    const inertiaX = -accelX * 0.08;
-    const inertiaY = -accelY * 0.04;
+      if (dist === 0) continue;
 
-    // Convert linear inertia to angular (based on limb orientation)
-    const worldAngle = t.rot + limb.rot + Math.PI / 2; // Limbs hang down
-    limb.vrot += inertiaX * Math.cos(worldAngle) + inertiaY * Math.sin(worldAngle);
+      // How much to correct
+      const diff = stick.length - dist;
+      const percent = diff / dist / 2; // Split between both points
 
-    // Torso rotation drags limbs along (but with lag)
-    limb.vrot += t.vrot * 0.5;
+      const offsetX = dx * percent;
+      const offsetY = dy * percent;
 
-    // Gravity - limbs want to hang straight down relative to world
-    // Calculate angle of limb relative to straight down
-    const limbWorldAngle = t.rot + limb.rot;
-    const gravityTorque = Math.sin(limbWorldAngle) * limb.gravity;
-    limb.vrot -= gravityTorque;
+      // Move points to satisfy constraint
+      if (!a.pinned) {
+        a.x -= offsetX;
+        a.y -= offsetY;
+      }
+      if (!b.pinned) {
+        b.x += offsetX;
+        b.y += offsetY;
+      }
+    }
 
-    // Apply angular velocity
-    limb.rot += limb.vrot;
-
-    // Damping
-    limb.vrot *= limb.damping;
-
-    // Soft joint limits - spring back gently at extremes instead of hard clamp
-    const maxRot = Math.PI * 0.85;
-    if (Math.abs(limb.rot) > maxRot) {
-      const excess = Math.abs(limb.rot) - maxRot;
-      limb.vrot -= Math.sign(limb.rot) * excess * 0.3;
-      limb.rot = Math.sign(limb.rot) * Math.min(Math.abs(limb.rot), Math.PI * 0.95);
+    // Re-apply ground constraint after each iteration
+    for (const name in ragdoll.points) {
+      const p = ragdoll.points[name];
+      if (p.y > groundY) {
+        p.y = groundY;
+      }
     }
   }
 
-  // Blood spurting from wound
+  // === BLOOD SPURTING ===
   if (ragdoll.wound && ragdoll.wound.intensity > 0) {
     const wound = ragdoll.wound;
+    const chest = ragdoll.points.chest;
 
-    // Calculate world position of wound (attached to torso)
-    const woundWorldX = ragdoll.baseX + t.x + wound.offsetX * Math.cos(t.rot);
-    const woundWorldY = ragdoll.baseY + t.y + wound.offsetY;
-
-    // Spawn blood spurts (fewer as intensity decreases)
+    // Spawn blood spurts
     const spurtChance = wound.intensity * 0.6;
     if (Math.random() < spurtChance) {
       const numDrops = Math.floor(1 + Math.random() * 3 * wound.intensity);
@@ -601,12 +712,14 @@ function updateRagdoll() {
         const spread = (Math.random() - 0.5) * 1.5;
         const speed = 2 + Math.random() * 5 * wound.intensity;
         const angle = Math.atan2(wound.bulletVy, wound.bulletVx) + spread;
+        const vx = chest.x - chest.oldX;
+        const vy = chest.y - chest.oldY;
 
         state.blood.push({
-          x: woundWorldX + (Math.random() - 0.5) * 10,
-          y: woundWorldY + (Math.random() - 0.5) * 10,
-          vx: Math.cos(angle) * speed + t.vx * 0.3,
-          vy: Math.sin(angle) * speed + t.vy * 0.3 - 1,
+          x: chest.x + (Math.random() - 0.5) * 10,
+          y: chest.y + (Math.random() - 0.5) * 10,
+          vx: Math.cos(angle) * speed + vx * 0.3,
+          vy: Math.sin(angle) * speed + vy * 0.3 - 1,
           size: 2 + Math.random() * 4,
           life: 0.8 + Math.random() * 0.2,
         });
@@ -621,17 +734,8 @@ function updateRagdoll() {
 function resetRagdoll() {
   ragdoll.active = false;
   ragdoll.wound = null;
-  ragdoll.hitGround = false;
-
-  // Reset torso
-  ragdoll.torso = { x: 0, y: 0, vx: 0, vy: 0, prevVx: 0, prevVy: 0, rot: 0, vrot: 0 };
-
-  // Reset limbs with their physical properties
-  ragdoll.head = { rot: 0, vrot: 0, damping: 0.96, gravity: 0.08, length: 25 };
-  ragdoll.armGun = { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.armBack = { rot: 0, vrot: 0, damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.legL = { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 };
-  ragdoll.legR = { rot: 0, vrot: 0, damping: 0.94, gravity: 0.15, length: 45 };
+  ragdoll.points = {};
+  ragdoll.sticks = [];
 }
 
 // Fire bullet from winner to loser
@@ -870,53 +974,63 @@ function drawGibs() {
 function startRagdollWithImpact(isPlayer, baseX, groundY, bulletVx, bulletVy, woundX, woundY) {
   ragdoll.active = true;
   ragdoll.isPlayer = isPlayer;
-  ragdoll.startTime = Date.now();
   ragdoll.groundY = groundY;
   ragdoll.baseX = baseX;
   ragdoll.baseY = groundY;
-  ragdoll.hitGround = false;
 
   // Set up wound for blood spurting
   ragdoll.wound = {
-    offsetX: woundX - baseX,
-    offsetY: woundY - groundY + scale(50),
     intensity: 1.0,
     bulletVx: bulletVx,
     bulletVy: bulletVy,
   };
 
-  // Impact direction and force
+  // Initialize the skeleton
+  initRagdollSkeleton(baseX, groundY);
+
+  // Impact force from bullet direction
   const hitDir = bulletVx > 0 ? 1 : -1;
-  const impactForce = 10 + Math.random() * 6;
-  const upForce = -8 - Math.random() * 5;
+  const impactForce = 15 + Math.random() * 10;
+  const upForce = -10 - Math.random() * 8;
 
-  // Torso gets strong initial impact with spin
-  ragdoll.torso = {
-    x: 0,
-    y: -scale(50),
-    vx: hitDir * impactForce,
-    vy: upForce,
-    prevVx: 0,
-    prevVy: 0,
-    rot: hitDir * 0.15,
-    vrot: hitDir * (0.15 + Math.random() * 0.12),
-  };
+  // Apply velocity to all points
+  for (const name in ragdoll.points) {
+    const p = ragdoll.points[name];
+    p.oldX = p.x - hitDir * impactForce * (0.6 + Math.random() * 0.4);
+    p.oldY = p.y - upForce * (0.6 + Math.random() * 0.4);
+  }
 
-  // Limbs react with inertia - they lag behind the sudden torso movement
-  // Arms flail dramatically, legs trail
-  ragdoll.head = { rot: -hitDir * 0.4, vrot: -hitDir * (0.25 + Math.random() * 0.2), damping: 0.96, gravity: 0.08, length: 25 };
-  ragdoll.armGun = { rot: -hitDir * 0.8, vrot: -hitDir * (0.5 + Math.random() * 0.4), damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.armBack = { rot: -hitDir * 0.6, vrot: -hitDir * (0.45 + Math.random() * 0.35), damping: 0.92, gravity: 0.12, length: 30 };
-  ragdoll.legL = { rot: -hitDir * 0.25, vrot: -hitDir * (0.18 + Math.random() * 0.12), damping: 0.94, gravity: 0.15, length: 45 };
-  ragdoll.legR = { rot: -hitDir * 0.2, vrot: -hitDir * (0.15 + Math.random() * 0.12), damping: 0.94, gravity: 0.15, length: 45 };
+  // Extra kick to extremities - they fling dramatically
+  const p = ragdoll.points;
+  const fling = impactForce * 0.8;
+
+  // Head whips back
+  p.head.oldX -= hitDir * fling * 1.2;
+  p.head.oldY -= 5;
+
+  // Gun hand flies with gun
+  p.handF.oldX -= hitDir * fling * 2;
+  p.handF.oldY -= 8;
+  p.elbowF.oldX -= hitDir * fling * 1.5;
+
+  // Back hand flails
+  p.handB.oldX -= hitDir * fling * 1.3;
+  p.handB.oldY -= 4;
+
+  // Feet kick
+  p.footL.oldX -= hitDir * fling * 0.5;
+  p.footL.oldY -= 3;
+  p.footR.oldX -= hitDir * fling * 0.5;
+  p.footR.oldY -= 3;
 }
 
 // Draw ragdolled cowboy - hierarchical: torso is root, limbs attach to it
+// Draw ragdoll using Verlet points - body parts stretch between points
 function drawRagdoll(baseX, baseY, facingRight) {
-  ctx.save();
+  if (!ragdoll.points.head) return;
 
+  ctx.save();
   const s = scale(1);
-  const dir = facingRight ? 1 : -1;
   const lineWidth = scale(3);
 
   ctx.lineWidth = lineWidth;
@@ -924,180 +1038,143 @@ function drawRagdoll(baseX, baseY, facingRight) {
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#000';
 
-  const t = ragdoll.torso;
+  const p = ragdoll.points;
 
-  // World position of torso center
-  const torsoX = baseX + t.x;
-  const torsoY = baseY + t.y;
-  const torsoRot = t.rot;
+  // Helper: draw a limb (thick line) between two points
+  function drawLimb(p1, p2, thickness, color) {
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = thickness + scale(2);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
 
-  // Helper to get attachment point position (relative to torso center, affected by torso rotation)
-  function getAttachmentPoint(offsetX, offsetY) {
-    const cos = Math.cos(torsoRot);
-    const sin = Math.sin(torsoRot);
-    return {
-      x: torsoX + offsetX * cos - offsetY * sin,
-      y: torsoY + offsetX * sin + offsetY * cos,
-    };
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
   }
 
-  // Draw legs (behind torso) - attached at hip
-  const hipL = getAttachmentPoint(-s * 8, s * 25);
-  const hipR = getAttachmentPoint(s * 8, s * 25);
+  // Helper: draw a circle (joint or head)
+  function drawCircle(point, radius, color) {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = scale(2);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
 
-  // Left leg
-  ctx.save();
-  ctx.translate(hipL.x, hipL.y);
-  ctx.rotate(torsoRot + ragdoll.legL.rot);
-  ctx.fillStyle = cowboyColors.pants;
-  ctx.beginPath();
-  ctx.roundRect(-s * 6, 0, s * 12, s * 30, s * 3);
-  ctx.fill();
-  ctx.stroke();
-  // Boot
-  ctx.fillStyle = cowboyColors.boots;
-  ctx.beginPath();
-  ctx.roundRect(-s * 8, s * 30, s * 16, s * 15, s * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  // Helper: draw torso as a filled shape
+  function drawTorso() {
+    ctx.fillStyle = cowboyColors.shirt;
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = scale(2);
+    ctx.beginPath();
+    ctx.moveTo(p.shoulderB.x, p.shoulderB.y);
+    ctx.lineTo(p.shoulderF.x, p.shoulderF.y);
+    ctx.lineTo(p.hipR.x, p.hipR.y);
+    ctx.lineTo(p.hipL.x, p.hipL.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-  // Right leg
-  ctx.save();
-  ctx.translate(hipR.x, hipR.y);
-  ctx.rotate(torsoRot + ragdoll.legR.rot);
-  ctx.fillStyle = cowboyColors.pants;
-  ctx.beginPath();
-  ctx.roundRect(-s * 6, 0, s * 12, s * 30, s * 3);
-  ctx.fill();
-  ctx.stroke();
-  // Boot
-  ctx.fillStyle = cowboyColors.boots;
-  ctx.beginPath();
-  ctx.roundRect(-s * 8, s * 30, s * 16, s * 15, s * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+    // Vest accent
+    ctx.fillStyle = cowboyColors.vest;
+    ctx.beginPath();
+    ctx.moveTo(p.chest.x, p.chest.y);
+    ctx.lineTo(p.shoulderF.x, p.shoulderF.y);
+    ctx.lineTo(p.hipR.x, p.hipR.y);
+    ctx.closePath();
+    ctx.fill();
+  }
 
-  // Back arm - attached at back shoulder
-  const shoulderBack = getAttachmentPoint(-dir * s * 12, -s * 20);
-  ctx.save();
-  ctx.translate(shoulderBack.x, shoulderBack.y);
-  ctx.rotate(torsoRot + ragdoll.armBack.rot);
-  ctx.fillStyle = cowboyColors.shirt;
-  ctx.beginPath();
-  ctx.roundRect(-s * 5, 0, s * 10, s * 25, s * 3);
-  ctx.fill();
-  ctx.stroke();
-  // Hand
-  ctx.fillStyle = cowboyColors.skin;
-  ctx.beginPath();
-  ctx.arc(0, s * 28, s * 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  // Draw order: back leg, back arm, torso, front leg, front arm, head
+
+  // Back leg (left leg)
+  drawLimb(p.hipL, p.kneeL, s * 10, cowboyColors.pants);
+  drawLimb(p.kneeL, p.footL, s * 9, cowboyColors.pants);
+  drawCircle(p.footL, s * 7, cowboyColors.boots);
+
+  // Back arm
+  drawLimb(p.shoulderB, p.elbowB, s * 8, cowboyColors.shirt);
+  drawLimb(p.elbowB, p.handB, s * 7, cowboyColors.shirt);
+  drawCircle(p.handB, s * 5, cowboyColors.skin);
 
   // Torso
-  ctx.save();
-  ctx.translate(torsoX, torsoY);
-  ctx.rotate(torsoRot);
-  ctx.fillStyle = cowboyColors.shirt;
-  ctx.beginPath();
-  ctx.moveTo(-s * 15, -s * 25);
-  ctx.lineTo(s * 15, -s * 25);
-  ctx.lineTo(s * 12, s * 25);
-  ctx.lineTo(-s * 12, s * 25);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  // Vest
-  ctx.fillStyle = cowboyColors.vest;
-  ctx.beginPath();
-  ctx.moveTo(dir * s * 5, -s * 25);
-  ctx.lineTo(dir * s * 14, -s * 20);
-  ctx.lineTo(dir * s * 10, s * 25);
-  ctx.lineTo(dir * s * 5, s * 25);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  drawTorso();
 
-  // Gun arm - attached at front shoulder
-  const shoulderGun = getAttachmentPoint(dir * s * 12, -s * 20);
+  // Spine/neck for connection
+  drawLimb(p.chest, p.neck, s * 8, cowboyColors.shirt);
+
+  // Front leg (right leg)
+  drawLimb(p.hipR, p.kneeR, s * 10, cowboyColors.pants);
+  drawLimb(p.kneeR, p.footR, s * 9, cowboyColors.pants);
+  drawCircle(p.footR, s * 7, cowboyColors.boots);
+
+  // Front arm (gun arm)
+  drawLimb(p.shoulderF, p.elbowF, s * 8, cowboyColors.shirt);
+  drawLimb(p.elbowF, p.handF, s * 7, cowboyColors.shirt);
+  drawCircle(p.handF, s * 5, cowboyColors.skin);
+
+  // Gun in hand
+  const gunAngle = Math.atan2(p.handF.y - p.elbowF.y, p.handF.x - p.elbowF.x);
   ctx.save();
-  ctx.translate(shoulderGun.x, shoulderGun.y);
-  ctx.rotate(torsoRot + ragdoll.armGun.rot);
-  ctx.fillStyle = cowboyColors.shirt;
-  ctx.beginPath();
-  ctx.roundRect(-s * 5, 0, s * 10, s * 25, s * 3);
-  ctx.fill();
-  ctx.stroke();
-  // Hand
-  ctx.fillStyle = cowboyColors.skin;
-  ctx.beginPath();
-  ctx.arc(0, s * 28, s * 6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  // Gun
+  ctx.translate(p.handF.x, p.handF.y);
+  ctx.rotate(gunAngle);
   ctx.fillStyle = cowboyColors.gun;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = scale(1.5);
   ctx.beginPath();
-  ctx.roundRect(-s * 3, s * 25, s * 20, s * 6, s * 1);
+  ctx.roundRect(0, -s * 3, s * 18, s * 6, s * 1);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
-
-  // Head - attached at top of torso
-  const neckAttach = getAttachmentPoint(0, -s * 25);
-  ctx.save();
-  ctx.translate(neckAttach.x, neckAttach.y);
-  ctx.rotate(torsoRot + ragdoll.head.rot);
 
   // Neck
-  ctx.fillStyle = cowboyColors.skin;
-  ctx.fillRect(-s * 5, -s * 10, s * 10, s * 12);
-  ctx.strokeRect(-s * 5, -s * 10, s * 10, s * 12);
+  drawLimb(p.neck, p.head, s * 6, cowboyColors.skin);
 
   // Head
-  ctx.fillStyle = cowboyColors.skin;
-  ctx.beginPath();
-  ctx.ellipse(0, -s * 25, s * 18, s * 20, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  drawCircle(p.head, s * 14, cowboyColors.skin);
 
-  // X eyes (dead)
+  // X eyes (dead) - calculate head angle from neck
+  const headAngle = Math.atan2(p.head.y - p.neck.y, p.head.x - p.neck.x) - Math.PI / 2;
+  ctx.save();
+  ctx.translate(p.head.x, p.head.y);
+  ctx.rotate(headAngle);
+
   ctx.strokeStyle = '#000';
   ctx.lineWidth = scale(2);
   // Left X
   ctx.beginPath();
-  ctx.moveTo(-s * 8, -s * 30);
-  ctx.lineTo(-s * 2, -s * 24);
-  ctx.moveTo(-s * 2, -s * 30);
-  ctx.lineTo(-s * 8, -s * 24);
+  ctx.moveTo(-s * 5, -s * 4);
+  ctx.lineTo(-s * 1, 0);
+  ctx.moveTo(-s * 1, -s * 4);
+  ctx.lineTo(-s * 5, 0);
   ctx.stroke();
   // Right X
   ctx.beginPath();
-  ctx.moveTo(s * 2, -s * 30);
-  ctx.lineTo(s * 8, -s * 24);
-  ctx.moveTo(s * 8, -s * 30);
-  ctx.lineTo(s * 2, -s * 24);
+  ctx.moveTo(s * 1, -s * 4);
+  ctx.lineTo(s * 5, 0);
+  ctx.moveTo(s * 5, -s * 4);
+  ctx.lineTo(s * 1, 0);
   ctx.stroke();
 
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = lineWidth;
-
-  // Hat (tilted/falling off)
+  // Hat
   ctx.fillStyle = cowboyColors.hat;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = scale(2);
+  // Brim
   ctx.beginPath();
-  ctx.ellipse(s * 3, -s * 42, s * 28, s * 7, 0.3, 0, Math.PI * 2);
+  ctx.ellipse(0, -s * 10, s * 20, s * 5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   // Crown
   ctx.beginPath();
-  ctx.moveTo(-s * 10, -s * 42);
-  ctx.lineTo(-s * 6, -s * 65);
-  ctx.lineTo(s * 16, -s * 63);
-  ctx.lineTo(s * 18, -s * 40);
-  ctx.closePath();
+  ctx.roundRect(-s * 10, -s * 25, s * 20, s * 16, s * 3);
   ctx.fill();
   ctx.stroke();
 
@@ -1177,19 +1254,100 @@ function getAITypeInterval() {
   return (60000 / cpm) * variance;
 }
 
-// Draw background image (scaled to cover canvas)
+// Draw dynamic sky background with foreground overlay
 function drawBackground() {
   const w = canvas.width;
   const h = canvas.height;
+  const palette = skyPalettes[state.currentBg % skyPalettes.length];
 
-  if (backgroundLoaded) {
-    // Draw the background image scaled to cover the canvas
-    // The image will be stretched to fit the canvas dimensions
-    ctx.drawImage(backgroundImage, 0, 0, w, h);
-  } else {
-    // Fallback solid color while image loads
-    ctx.fillStyle = '#c9a66b';
+  // Layer 1: Sky gradient
+  const skyGradient = ctx.createLinearGradient(0, 0, 0, h);
+  skyGradient.addColorStop(0, palette.top);
+  skyGradient.addColorStop(0.5, palette.mid);
+  skyGradient.addColorStop(1, palette.bottom);
+  ctx.fillStyle = skyGradient;
+  ctx.fillRect(0, 0, w, h);
+
+  // Layer 2: Stars (night only)
+  if (palette.isNight) {
+    drawStars();
+  }
+
+  // Layer 3: Sun or Moon
+  drawCelestialBody(palette);
+
+  // Layer 4: Foreground image (saloon/buildings)
+  if (foregroundLoaded) {
+    ctx.drawImage(foregroundImage, 0, 0, w, h);
+  }
+
+  // Layer 5: Color tint overlay for time-of-day lighting
+  if (palette.tint && palette.tintOpacity > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = palette.tintOpacity;
+    ctx.fillStyle = palette.tint;
     ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+}
+
+// Draw twinkling stars for night sky
+function drawStars() {
+  const time = Date.now() * 0.001;  // Convert to seconds
+
+  for (const star of stars) {
+    const x = star.x * canvas.width;
+    const y = star.y * canvas.height;
+
+    // Twinkle effect
+    const twinkle = 0.5 + Math.sin(time * star.twinkleSpeed * 10 + star.twinkleOffset) * 0.5;
+    const opacity = 0.4 + twinkle * 0.6;
+
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(x, y, star.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Draw sun or moon based on palette
+function drawCelestialBody(palette) {
+  const centerX = canvas.width * 0.5;
+  const centerY = canvas.height * palette.sunY;
+  const bodyRadius = scale(palette.isNight ? 25 : 30);
+
+  // Outer glow
+  const glowRadius = bodyRadius * 3;
+  const glowGradient = ctx.createRadialGradient(centerX, centerY, bodyRadius * 0.5, centerX, centerY, glowRadius);
+  glowGradient.addColorStop(0, palette.sunGlow + '60');  // Semi-transparent
+  glowGradient.addColorStop(0.5, palette.sunGlow + '20');
+  glowGradient.addColorStop(1, palette.sunGlow + '00');  // Fully transparent
+  ctx.fillStyle = glowGradient;
+  ctx.fillRect(centerX - glowRadius, centerY - glowRadius, glowRadius * 2, glowRadius * 2);
+
+  // Main body
+  ctx.fillStyle = palette.sun;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, bodyRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Moon craters (subtle, only at night)
+  if (palette.isNight) {
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#888888';
+    ctx.beginPath();
+    ctx.arc(centerX - bodyRadius * 0.3, centerY - bodyRadius * 0.2, bodyRadius * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(centerX + bodyRadius * 0.2, centerY + bodyRadius * 0.3, bodyRadius * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(centerX + bodyRadius * 0.35, centerY - bodyRadius * 0.1, bodyRadius * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 }
 
