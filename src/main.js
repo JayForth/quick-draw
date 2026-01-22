@@ -1,5 +1,5 @@
 // Quick Draw - Typing Showdown Game
-const VERSION = '2.0.0'; // Verlet ragdoll physics
+const VERSION = '2.1.0'; // Parallax clouds
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -54,6 +54,136 @@ for (let i = 0; i < STAR_COUNT; i++) {
     twinkleOffset: Math.random() * Math.PI * 2,
     twinkleSpeed: 0.02 + Math.random() * 0.03,
   });
+}
+
+// ============================================
+// PARALLAX CLOUDS
+// ============================================
+
+// Back layer clouds (distant, slower, smaller)
+const cloudsBack = [];
+const CLOUDS_BACK_COUNT = 4;
+
+// Front layer clouds (closer, faster, larger)
+const cloudsFront = [];
+const CLOUDS_FRONT_COUNT = 3;
+
+function createCloud(isBack) {
+  const baseSize = isBack ? 30 + Math.random() * 20 : 50 + Math.random() * 30;
+  return {
+    x: Math.random() * 1.5 - 0.25,  // -0.25 to 1.25 (percentage, allows off-screen start)
+    y: isBack ? 0.08 + Math.random() * 0.15 : 0.12 + Math.random() * 0.2,  // Upper sky
+    size: baseSize,
+    speed: isBack ? 0.00003 + Math.random() * 0.00002 : 0.00006 + Math.random() * 0.00003,
+    puffs: generateCloudPuffs(),  // Random puff arrangement
+    opacity: isBack ? 0.4 + Math.random() * 0.2 : 0.6 + Math.random() * 0.2,
+  };
+}
+
+// Generate random puff positions for variety
+function generateCloudPuffs() {
+  const puffs = [
+    { ox: 0, oy: 0, scale: 0.8 + Math.random() * 0.4 },  // Center
+    { ox: -0.7, oy: 0.1, scale: 0.5 + Math.random() * 0.3 },  // Left
+    { ox: 0.7, oy: 0.05, scale: 0.6 + Math.random() * 0.3 },  // Right
+  ];
+  // Add 1-2 extra random puffs
+  const extraCount = 1 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < extraCount; i++) {
+    puffs.push({
+      ox: (Math.random() - 0.5) * 1.2,
+      oy: (Math.random() - 0.5) * 0.4,
+      scale: 0.4 + Math.random() * 0.4,
+    });
+  }
+  return puffs;
+}
+
+function initClouds() {
+  for (let i = 0; i < CLOUDS_BACK_COUNT; i++) {
+    cloudsBack.push(createCloud(true));
+  }
+  for (let i = 0; i < CLOUDS_FRONT_COUNT; i++) {
+    cloudsFront.push(createCloud(false));
+  }
+}
+
+function updateClouds() {
+  // Update back layer
+  for (const cloud of cloudsBack) {
+    cloud.x += cloud.speed;
+    if (cloud.x > 1.3) {
+      cloud.x = -0.3;
+      cloud.y = 0.08 + Math.random() * 0.15;
+      cloud.puffs = generateCloudPuffs();
+    }
+  }
+  // Update front layer
+  for (const cloud of cloudsFront) {
+    cloud.x += cloud.speed;
+    if (cloud.x > 1.3) {
+      cloud.x = -0.3;
+      cloud.y = 0.12 + Math.random() * 0.2;
+      cloud.puffs = generateCloudPuffs();
+    }
+  }
+}
+
+function drawClouds(palette) {
+  // Determine cloud color based on time of day
+  let cloudColor, cloudOpacityMult;
+  if (palette.isNight) {
+    cloudColor = { r: 60, g: 60, b: 80 };  // Dark blue-gray
+    cloudOpacityMult = 0.3;  // Much fainter at night
+  } else if (palette.sunY > 0.45) {
+    // Sunset - warm colors
+    cloudColor = { r: 255, g: 180, b: 140 };
+    cloudOpacityMult = 0.9;
+  } else if (palette.sunY > 0.35) {
+    // Golden hour
+    cloudColor = { r: 255, g: 220, b: 180 };
+    cloudOpacityMult = 0.85;
+  } else {
+    // Day - white
+    cloudColor = { r: 255, g: 255, b: 255 };
+    cloudOpacityMult = 0.75;
+  }
+
+  // Draw back layer first (behind)
+  for (const cloud of cloudsBack) {
+    drawSingleCloud(cloud, cloudColor, cloudOpacityMult * 0.6);
+  }
+  // Draw front layer (in front)
+  for (const cloud of cloudsFront) {
+    drawSingleCloud(cloud, cloudColor, cloudOpacityMult);
+  }
+}
+
+function drawSingleCloud(cloud, color, opacityMult) {
+  const x = cloud.x * canvas.width;
+  const y = cloud.y * canvas.height;
+  const size = cloud.size * (canvas.height / 400);  // Scale with canvas
+
+  ctx.globalAlpha = cloud.opacity * opacityMult;
+
+  for (const puff of cloud.puffs) {
+    const px = x + puff.ox * size;
+    const py = y + puff.oy * size;
+    const psize = size * puff.scale;
+
+    // Gradient for soft puffy look
+    const gradient = ctx.createRadialGradient(px, py, 0, px, py, psize);
+    gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, 1)`);
+    gradient.addColorStop(0.5, `rgba(${color.r}, ${color.g}, ${color.b}, 0.6)`);
+    gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, 0)`);
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(px, py, psize, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
 }
 
 // ============================================
@@ -325,6 +455,7 @@ function drawDustMotes() {
 function initAtmosphere() {
   initDust();
   initDustMotes();
+  initClouds();
   lastTumbleweedTime = Date.now();
 }
 
@@ -333,6 +464,7 @@ function updateAtmosphere() {
   updateDust();
   updateDustMotes();
   updateTumbleweeds();
+  updateClouds();
 }
 
 // Draw all atmospheric effects (call after background, before characters)
@@ -1276,7 +1408,10 @@ function drawBackground() {
   // Layer 3: Sun or Moon
   drawCelestialBody(palette);
 
-  // Layer 4: Foreground image (saloon/buildings)
+  // Layer 4: Clouds (parallax layers)
+  drawClouds(palette);
+
+  // Layer 5: Foreground image (saloon/buildings)
   if (foregroundLoaded) {
     ctx.drawImage(foregroundImage, 0, 0, w, h);
   }
